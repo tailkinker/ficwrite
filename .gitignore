@@ -1,0 +1,9 @@
+# Free Pascal compiled files
+*.ppu
+*.o
+*.a
+*.or
+*.res
+
+# Executables (add specific executable names here if needed)
+# myprogram
