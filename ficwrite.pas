@@ -1,30 +1,38 @@
 program ficwrite;
 
-{$mode objfpc}{$H+}
+// Compile with
+// fpc -dDEBUG ficwrite
+// for debugging
+
+{$mode objfpc}{$H+}{$R+}
 
 uses
-  SysUtils, doption, gdoc;
+  SysUtils, doption, gdoc, gterm
+{$IFDEF DEBUG}, debug{$ENDIF};
 
-procedure PrintUsage;
 begin
-  WriteLn('Usage: ficwrite [options] filename');
-end;
-
-var
-  Document : tDocument;
-  index : integer;
-  
-begin
+  {$IFDEF DEBUG}
+  StartDebug('/dev/pts/0');
+  {$ENDIF}
   ParseCommandLine;
 
-  Document := tDocument.Create;
-  if (Options.Filename <> '') then
-    Document.LoadFromFile (Options.Filename);
-    
-  { Temporary diagnostic output. }
-  WriteLn('Filename: ', Options.FileName);
-  for index := 0 to (Document.ParagraphCount - 1) do
-    writeln (Document.Paragraph [index].Text);
+  Options.Filename := 'loremipsum.txt';
+  Document := TDocument.Create;
+  try
+    if Options.FileName <> '' then begin
+      Document.LoadFromFile(Options.FileName);
+    end;
 
-  { Editor will eventually start here. }
+    TermInit;
+    try
+      TermRun;
+    finally
+      TermDone;
+    end;
+  finally
+    Document.Free;
+    {$IFDEF DEBUG}
+    StopDebug;
+    {$ENDIF}
+  end;
 end.

@@ -1,33 +1,19 @@
 unit gdoc;
 
-{$mode objfpc}{$H+}
+{$mode objfpc}{$H+}{$R+}
 
 interface
 
+uses
+  dcommon;
+  
 type
-  { 
-  A logical position within the document.
-  Both fields are zero-based.
-
-  Position is measured in Unicode code points, not UTF-8 bytes
-  and not terminal display columns. It identifies a boundary
-  between code points, so Position may range from zero through
-  the number of code points in the paragraph. 
-  }  
-  TCursor = record
-    Paragraph: SizeInt;
-    Position: SizeInt;
-  end;
-
   TParagraph = class
-  private
-    function BytePosition(const Position: SizeInt): SizeInt;
-    function CodePointLength(const BytePos: SizeInt): SizeInt;
   public
-    Text: RawByteString;
-    function CodePointCount: SizeInt;
-    function Insert(const CodePoint: Cardinal; var Cursor: TCursor): Boolean;
-    function Overwrite(const CodePoint: Cardinal; var Cursor: TCursor): Boolean;
+    Text: String;
+    function TextWithCR : string;
+    function Insert(const C: char; var Cursor: TCursor): Boolean;
+    function Overwrite(const C: char; var Cursor: TCursor): Boolean;
     function DeleteChar(var Cursor: TCursor): Boolean;
     function DeleteChar(const Count: UInt32; var Cursor: TCursor): Boolean;
     function Split(const Position: SizeInt; out Remainder: TParagraph): Boolean;  
@@ -45,8 +31,8 @@ type
     property Paragraph[Index: SizeInt]: TParagraph read GetParagraph;
     constructor Create;
     destructor Destroy; override;
-    function Insert(const c: Cardinal; var Cursor: TCursor): Boolean;
-    function Overwrite(const c: Cardinal; var Cursor: TCursor): Boolean;
+    function Insert(const C: char; var Cursor: TCursor): Boolean;
+    function Overwrite(const C: char; var Cursor: TCursor): Boolean;
     function DeleteChar(var Cursor: TCursor): Boolean;
     function DeleteChar(const Count: UInt32; var Cursor: TCursor): Boolean;
     function ParagraphBreak(var Cursor: TCursor): Boolean;
@@ -55,119 +41,57 @@ type
     function LoadFromFile(const FileName: string): Boolean;
     function SaveToFile(const FileName: string): Boolean;
   end;
-    
+
+var
+  Document : tDocument;
+
 implementation
 
 uses
-  cutf8;
+  SysUtils, doption;
 
 // === tParagraph =============================================================
 
-function TParagraph.CodePointCount: SizeInt;
-var
-  BytePos: SizeInt;
-  Length: SizeInt;
+function TParagraph.TextWithCR : string;
 begin
-  Result := 0;
-  BytePos := 1;
-
-  while BytePos <= System.Length(Text) do begin
-    Length := CodePointLength(BytePos);
-    if Length = 0 then 
-      Exit;
-
-    Inc(BytePos, Length);
-    Inc(Result);
-  end;
+  Result := Text + PARAGRAPH_MARKER;
 end;
 
-
-function TParagraph.BytePosition(const Position: SizeInt): SizeInt;
-var
-  Current: SizeInt;
-  Length: SizeInt;
-begin
-  Result := 1;
-  Current := 0;
-
-  while Current < Position do begin
-    if Result > System.Length(Text) then begin
-      Result := -1;
-      Exit;
-    end;
-    Length := CodePointLength(Result);
-    if Length = 0 then begin
-      Result := -1;
-      Exit;
-    end;
-    Inc(Result, Length);
-    Inc(Current);
-  end;
-end;
-
-
-function TParagraph.CodePointLength(const BytePos: SizeInt): SizeInt;
-var
-  CodePoint: Cardinal;
-begin
-  if DecodeUTF8(Text, BytePos, CodePoint, Result) then Exit;
-  Result := 0;
-end;
-
-function TParagraph.Insert(const CodePoint: Cardinal; var Cursor: TCursor): Boolean;
-var
-  BytePos: SizeInt;
-  Encoded: RawByteString;
+function TParagraph.Insert(const C: Char; var Cursor: TCursor): Boolean;
 begin
   Result := False;
 
-  if (CodePoint > $10FFFF) or ((CodePoint >= $D800) and (CodePoint <= $DFFF)) 
-    then Exit;
-  if (Cursor.Position < 0) or (Cursor.Position > CodePointCount) then Exit;
-  BytePos := BytePosition(Cursor.Position);
-  if BytePos < 1 then Exit;
+  { Valid insertion positions are 1..Length(Text)+1. }
+  if (Cursor.Position < 1) or
+     (Cursor.Position > Length(Text) + 1) then
+    Exit;
 
-  Encoded := EncodeUTF8(CodePoint);
-  if Encoded = '' then Exit;
-  System.Insert(Encoded, Text, BytePos);
-
+  System.Insert(C, Text, Cursor.Position);
   Inc(Cursor.Position);
+
   Result := True;
 end;
 
 
-function TParagraph.Overwrite(const CodePoint: Cardinal; var Cursor: TCursor): Boolean;
-var
-  BytePos: SizeInt;
-  OldLength: SizeInt;
-  Encoded: RawByteString;
+function TParagraph.Overwrite(const C: Char;
+  var Cursor: TCursor): Boolean;
 begin
   Result := False;
 
-  if (CodePoint > $10FFFF) or ((CodePoint >= $D800) and (CodePoint <= $DFFF)) 
-    then Exit;
-  if (Cursor.Position < 0) or (Cursor.Position > CodePointCount) then Exit;
+  { Valid positions are 1..Length(Text)+1. }
+  if (Cursor.Position < 1) or
+     (Cursor.Position > Length(Text) + 1) then
+    Exit;
 
   { At the end of the paragraph, overwrite becomes insert. }
-  if Cursor.Position = CodePointCount then begin
-    Result := Insert(CodePoint, Cursor);
+  if Cursor.Position = Length(Text) + 1 then begin
+    Result := Insert(C, Cursor);
     Exit;
   end;
 
-  BytePos := BytePosition(Cursor.Position);
-
-  if BytePos < 1 then Exit;
-
-  OldLength := CodePointLength(BytePos);
-  if OldLength = 0 then Exit;
-
-  Encoded := EncodeUTF8(CodePoint);
-  if Encoded = '' then Exit;
-
-  System.Delete(Text, BytePos, OldLength);
-  System.Insert(Encoded, Text, BytePos);
-
+  Text[Cursor.Position] := C;
   Inc(Cursor.Position);
+
   Result := True;
 end;
 
@@ -178,53 +102,63 @@ begin
 end;
 
 
-function TParagraph.DeleteChar(const Count: UInt32; var Cursor: TCursor): Boolean;
+function TParagraph.DeleteChar(const Count: UInt32;
+  var Cursor: TCursor): Boolean;
 var
-  BytePos: SizeInt;
-  EndBytePos: SizeInt;
-  Current: SizeInt;
-  Length: SizeInt;
+  ActualCount: UInt32;
 begin
   Result := False;
 
-  if Cursor.Position < 0 then Exit;
-  if Cursor.Position > CodePointCount then Exit;
+  { Cursor may point immediately after the final character,
+    but there is nothing to delete there. }
+  if (Cursor.Position < 1) or
+     (Cursor.Position > Length(Text)) then begin
+    { Deleting zero characters is still a successful no-op,
+      provided the cursor itself is valid. }
+    if (Count = 0) and
+       (Cursor.Position = Length(Text) + 1) then
+      Result := True;
+    Exit;
+  end;
 
   if Count = 0 then begin
     Result := True;
     Exit;
   end;
 
-  BytePos := BytePosition(Cursor.Position);
-  if BytePos < 1 then Exit;
-  Current := 0;
-  EndBytePos := BytePos;
+  ActualCount := Count;
 
-  while Current < Count do begin
-    if EndBytePos > System.Length(Text) then Exit;
-    Length := CodePointLength(EndBytePos);
-    if Length = 0 then Exit;
-    Inc(EndBytePos, Length);
-    Inc(Current);
-  end;
+  { Don't delete beyond the end of the paragraph. }
+  if ActualCount > UInt32(Length(Text) - Cursor.Position + 1) then
+    ActualCount := UInt32(Length(Text) - Cursor.Position + 1);
 
-  System.Delete(Text, BytePos, EndBytePos - BytePos);
+  System.Delete(Text, Cursor.Position, ActualCount);
+
   Result := True;
 end;
 
+
 function TParagraph.Split(const Position: SizeInt; out Remainder: TParagraph): Boolean;
-var
-  BytePos: SizeInt;
 begin
   Result := False;
   Remainder := nil;
-  if (Position < 0) or (Position > CodePointCount) then Exit;
-  BytePos := BytePosition(Position);
-  if BytePos < 1 then Exit;
+
+  { Position is the point at which the split occurs.
+    1 = before the first character.
+    Length(Text)+1 = after the final character. }
+  if (Position < 1) or
+     (Position > Length(Text) + 1) then
+    Exit;
 
   Remainder := TParagraph.Create;
-  Remainder.Text := Copy(Text, BytePos, Length(Text) - BytePos + 1);
-  Delete(Text, BytePos, Length(Text) - BytePos + 1);
+
+  { Copy everything from Position onward. }
+  Remainder.Text :=
+    Copy(Text, Position, Length(Text) - Position + 1);
+
+  { Keep everything before Position. }
+  Delete(Text, Position, Length(Text) - Position + 1);
+
   Result := True;
 end;
 
@@ -232,6 +166,7 @@ end;
 
 constructor TDocument.Create;
 begin
+  inherited Create;
   SetLength(FParagraphs, 1);
   FParagraphs[0] := tParagraph.Create;
   FParagraphs[0].Text := '';
@@ -249,10 +184,10 @@ end;
 
 function TDocument.GetParagraph(const Index: SizeInt): TParagraph;
 begin
-  if (Index < 0) or (Index >= FParagraphCount) then
+  if (Index < 1) or (Index > FParagraphCount) then
     Result := nil
   else
-    Result := FParagraphs[Index];
+    Result := FParagraphs[Index - 1];
 end;
 
 procedure TDocument.Grow;
@@ -269,43 +204,42 @@ end;
 
 function TDocument.ValidCursor(const Cursor: TCursor): Boolean;
 begin
-  Result := FALSE;
-  if (Cursor.Paragraph < 0) or (Cursor.Paragraph >= FParagraphCount) then Exit;
-  if FParagraphs[Cursor.Paragraph] = nil then Exit;
-
-  Result := (Cursor.Position >= 0) and 
-    (Cursor.Position <= FParagraphs[Cursor.Paragraph].CodePointCount);
+  Result := False;
+  if (Cursor.Paragraph < 1) or
+     (Cursor.Paragraph > FParagraphCount) then
+    Exit;
+  if FParagraphs[Cursor.Paragraph - 1] = nil then
+    Exit;
+  Result := (Cursor.Position >= 1) and
+    (Cursor.Position <= Length(FParagraphs[Cursor.Paragraph - 1].Text) + 1);
 end;
 
-function TDocument.Insert(const c: Cardinal;
-  var Cursor: TCursor): Boolean;
+function TDocument.Insert(const c: char; var Cursor: TCursor): Boolean;
 begin
   Result := False;
   if not ValidCursor(Cursor) then Exit;
-  Result := FParagraphs[Cursor.Paragraph].Insert(c, Cursor);
+  Result := FParagraphs[Cursor.Paragraph - 1].Insert(c, Cursor);
 end;
 
-function TDocument.Overwrite(const c: Cardinal;
-  var Cursor: TCursor): Boolean;
+function TDocument.Overwrite(const c: char; var Cursor: TCursor): Boolean;
 begin
   Result := False;
   if not ValidCursor(Cursor) then Exit;
-  Result := FParagraphs[Cursor.Paragraph].Overwrite(c, Cursor);
+  Result := FParagraphs[Cursor.Paragraph - 1].Overwrite(c, Cursor);
 end;
 
 function TDocument.DeleteChar(var Cursor: TCursor): Boolean;
 begin
   Result := False;
   if not ValidCursor(Cursor) then Exit;
-  Result := FParagraphs[Cursor.Paragraph].DeleteChar(Cursor);
+  Result := FParagraphs[Cursor.Paragraph - 1].DeleteChar(Cursor);
 end;
 
-function TDocument.DeleteChar(const Count: UInt32;
-  var Cursor: TCursor): Boolean;
+function TDocument.DeleteChar(const Count: UInt32; var Cursor: TCursor): Boolean;
 begin
   Result := False;
   if not ValidCursor(Cursor) then Exit;
-  Result := FParagraphs[Cursor.Paragraph].DeleteChar(Count, Cursor);
+  Result := FParagraphs[Cursor.Paragraph - 1].DeleteChar(Count, Cursor);
 end;
 
 function TDocument.ParagraphBreak(var Cursor: TCursor): Boolean;
@@ -322,10 +256,10 @@ begin
     Grow;
 
   { The new paragraph goes immediately after the current one. }
-  NewIndex := Cursor.Paragraph + 1;
+  NewIndex := Cursor.Paragraph;
 
   { Split the current paragraph. }
-  if not FParagraphs[Cursor.Paragraph].Split(Cursor.Position, NewParagraph) then begin
+  if not FParagraphs[Cursor.Paragraph - 1].Split(Cursor.Position, NewParagraph) then begin
     if (Assigned (NewParagraph)) then 
       NewParagraph.Destroy;
     Exit;
@@ -341,35 +275,35 @@ begin
   Inc(FParagraphCount);
 
   { Put the cursor at the beginning of the new paragraph. }
-  Cursor.Paragraph := NewIndex;
-  Cursor.Position := 0;
+  Cursor.Paragraph := NewIndex + 1;
+  Cursor.Position := 1;
 
   Result := True;
 end;
 
 function TDocument.DeleteParagraph(const aParagraph: SizeInt): Boolean;
 var
-  I: SizeInt;
+  index: SizeInt;
 begin
   Result := False;
 
-  { A document must always contain at least one paragraph. }
   if FParagraphCount <= 1 then
     Exit;
 
-  { Check the paragraph index. }
-  if (aParagraph < 0) or (aParagraph >= FParagraphCount) then Exit;
-  
-  { Destroy the target paragraph object}
-  FParagraphs[aParagraph].Destroy;
+  if (aParagraph < 0) or (aParagraph > FParagraphCount - 1) then
+    Exit;
+
+  FParagraphs[aParagraph].Free;
 
   { Move following paragraphs up. }
-  for I := aParagraph to FParagraphCount - 2 do
-    FParagraphs[I] := FParagraphs[I + 1];
+  if aParagraph < FParagraphCount - 1 then
+    for index := aParagraph to FParagraphCount - 2 do
+      FParagraphs[index] := FParagraphs[index + 1];
 
   { Clear the now-unused paragraph slot. }
   FParagraphs[FParagraphCount - 1] := nil;
   Dec(FParagraphCount);
+
   Result := True;
 end;
 
@@ -383,7 +317,7 @@ begin
   if not ValidCursor(Cursor) then
     Exit;
 
-  Current := Cursor.Paragraph;
+  Current := Cursor.Paragraph - 1;
   Next := Current + 1;
 
   if Next >= FParagraphCount then
@@ -402,12 +336,10 @@ function TDocument.LoadFromFile(const FileName: string): Boolean;
 var
   F: File;
   FileSize: Int64;
-  Data: RawByteString;
+  Data: String;
   BytesRead: Integer;
 
   P: SizeInt;
-  ByteLength: SizeInt;
-  CodePoint: Cardinal;
   LineStart: SizeInt;
   LineEnd: SizeInt;
 
@@ -418,7 +350,7 @@ var
   I: SizeInt;
   CurrentParagraph: TParagraph;
 
-  procedure AddParagraph(const S: RawByteString);
+  procedure AddParagraph(const S: String);
   begin
     if NewCount = NewCapacity then begin
       if NewCapacity = 0 then
@@ -479,16 +411,6 @@ begin
   CloseFile(F);
   {$I+}
 
-  { Validate the entire file as UTF-8. }
-  P := 1;
-
-  while P <= Length(Data) do begin
-    if not DecodeUTF8(Data, P, CodePoint, ByteLength) then
-      Exit;
-
-    Inc(P, ByteLength);
-  end;
-
   { Build the new paragraph array. }
   NewCount := 0;
   NewCapacity := 0;
@@ -502,7 +424,7 @@ begin
     { LF terminates a paragraph. }
     if Data[P] = #10 then begin
 
-      { If preceded by CR, exclude the CR from the paragraph. }
+      { If preceded by CR, exclude the CR. }
       if (P > LineStart) and (Data[P - 1] = #13) then
         LineEnd := P - 2
       else
@@ -521,8 +443,9 @@ begin
     end;
 
     { Bare CR also terminates a paragraph.
-      CRLF is handled above when its LF is encountered. }
+      CRLF is handled when the LF is encountered. }
     if Data[P] = #13 then begin
+
       if (P = Length(Data)) or
          (Data[P + 1] <> #10) then begin
 
@@ -545,7 +468,8 @@ begin
     Inc(P);
   end;
 
-  { Add the final paragraph. }
+  { Add the final paragraph if there is text after the
+    final line ending. }
   if LineStart <= Length(Data) then
     AddParagraph(
       Copy(Data, LineStart, Length(Data) - LineStart + 1)
@@ -584,7 +508,7 @@ var
   F: File;
   I: SizeInt;
   BytesWritten: Integer;
-  LineEnding: RawByteString;
+  LineEnding: String;
 begin
   Result := False;
   LineEnding := #10;

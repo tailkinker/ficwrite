@@ -1,8 +1,11 @@
 unit doption;
 
-{$mode objfpc}{$H+}
+{$mode objfpc}{$H+}{$R+}
 
 interface
+
+uses
+  Video;
 
 type
   TOptions = record
