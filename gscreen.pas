@@ -186,9 +186,9 @@ begin
         Done := True
       else begin
         cPos := 1;
-        Para :=  aDocument.Paragraph[cPar];
-        if (Assigned (Para) then
-          PFrag :=Para.TextWithCR
+        Para := aDocument.Paragraph[cPar];
+        if (Assigned (Para)) then
+          PFrag := Para.TextWithCR
         else
           PFrag := '';
       end;
