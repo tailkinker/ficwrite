@@ -499,7 +499,7 @@ begin
   repeat
     DrawBox (R);
     
-    PutString(5,3, #2 + 'FicWrite' + #3 + ' 0.1a (C) 2026 Timothy Groves');
+    PutString(5,3, #2 + 'FicWrite' + #3 + ' ' + version + ' (C) 2026 Timothy Groves');
     if (Page = 0) then begin
       PutString(5, 5, #2 + 'F1' + #3 + '        Help (this screen!)');
       PutString(5, 6, #2 + 'F2' + #3 + '        Save (with same file name)');

@@ -146,6 +146,8 @@ begin
 end;
 
 function CursorMoveRightOne : boolean;
+var
+  LastLine : integer;
 begin
   Result := TRUE;
   if (Cursor.Position < length (Document.Paragraph[Cursor.Paragraph].TextWithCR)) then
@@ -156,7 +158,10 @@ begin
   end else
     Result := FALSE;
 
-  while (Scr.Line[BottomLine].Relative (Cursor) > 0) do
+  LastLine := BottomLine;
+  while (not Assigned (Scr.Line[LastLine])) do
+  	dec (LastLine);
+  while (Scr.Line[LastLine].Relative (Cursor) > 0) do
     inc (TopLine);
 end;
 

@@ -139,6 +139,7 @@ var
   cPar,
   cPos : SizeInt;
   PFrag : string;
+  Para : tParagraph;
   Done : boolean;
 begin
   if (aFrom = 0) then begin // Start at the top of the document
@@ -152,7 +153,11 @@ begin
     cPos := FLines [aFrom].Start.Position;
     LineIndex := aFrom;
   end;
-  PFrag := aDocument.Paragraph[cPar].TextWithCR;
+  Para := aDocument.Paragraph[cPar];
+  if Assigned (Para) then
+  	PFrag := Para.TextWithCR
+  else
+  	PFrag := '';
   if (length (PFrag) > 0) then
     PFrag := Copy(PFrag, cPos, MaxInt);  
   Done := FALSE;
@@ -181,7 +186,11 @@ begin
         Done := True
       else begin
         cPos := 1;
-        PFrag := aDocument.Paragraph[cPar].TextWithCR;
+        Para :=  aDocument.Paragraph[cPar];
+        if (Assigned (Para) then
+          PFrag :=Para.TextWithCR
+        else
+          PFrag := '';
       end;
       
       inc (LineIndex);

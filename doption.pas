@@ -16,6 +16,9 @@ type
 
 var
   Options: TOptions;
+  
+const
+  version = '0.1b';
 
 procedure ParseCommandLine;
 
