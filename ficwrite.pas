@@ -12,7 +12,7 @@ uses
 
 begin
   {$IFDEF DEBUG}
-  StartDebug('/dev/pts/0');
+  StartDebug('/dev/pts/1');
   {$ENDIF}
   ParseCommandLine;
 

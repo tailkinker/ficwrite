@@ -23,14 +23,19 @@ type
   private
     FParagraphs: array of TParagraph;
     FParagraphCount: SizeInt;
-    function ValidCursor(const Cursor: TCursor): Boolean;
+    FDirty : boolean;
+    FFilename : string;
     procedure Grow;
-    function GetParagraph(const Index: SizeInt): TParagraph;    
+    function GetParagraph(const Index: SizeInt): TParagraph;
+    procedure SetFileName (aFilename : string);
   public
+    property Dirty : boolean read FDirty;
     property ParagraphCount: SizeInt read FParagraphCount;
     property Paragraph[Index: SizeInt]: TParagraph read GetParagraph;
+    property Filename : string read FFileName write SetFileName;
     constructor Create;
     destructor Destroy; override;
+    function ValidCursor(const Cursor: TCursor): Boolean;
     function Insert(const C: char; var Cursor: TCursor): Boolean;
     function Overwrite(const C: char; var Cursor: TCursor): Boolean;
     function DeleteChar(var Cursor: TCursor): Boolean;
@@ -38,8 +43,12 @@ type
     function ParagraphBreak(var Cursor: TCursor): Boolean;
     function DeleteParagraph(const aParagraph: SizeInt): Boolean;  
     function CombineWithNext (var Cursor : tCursor) : boolean;
-    function LoadFromFile(const FileName: string): Boolean;
-    function SaveToFile(const FileName: string): Boolean;
+    function DeleteRange(const StartCursor, EndCursor: TCursor): SizeInt;
+    function LoadFromFile(const aFileName: string): Boolean;
+    function SaveToFile(const aFileName: string): Boolean;
+    function Load : boolean;
+    function Save : boolean;
+    procedure MarkDirty;
   end;
 
 var
@@ -171,6 +180,7 @@ begin
   FParagraphs[0] := tParagraph.Create;
   FParagraphs[0].Text := '';
   FParagraphCount := 1;
+  FDirty := FALSE;
 end;
 
 destructor TDocument.Destroy;
@@ -180,6 +190,11 @@ begin
   for index := 0 to (Length(FParagraphs) - 1) do
     FParagraphs[index].Free;
   SetLength (FParagraphs, 0);
+end;
+
+procedure TDocument.SetFileName (aFilename : string);
+begin
+  FFilename := aFilename;
 end;
 
 function TDocument.GetParagraph(const Index: SizeInt): TParagraph;
@@ -200,6 +215,7 @@ begin
     NewCapacity := 1;
 
   SetLength(FParagraphs, NewCapacity);
+  FDirty := TRUE;
 end;
 
 function TDocument.ValidCursor(const Cursor: TCursor): Boolean;
@@ -219,6 +235,8 @@ begin
   Result := False;
   if not ValidCursor(Cursor) then Exit;
   Result := FParagraphs[Cursor.Paragraph - 1].Insert(c, Cursor);
+  if (Result = TRUE) then
+    FDirty := TRUE;
 end;
 
 function TDocument.Overwrite(const c: char; var Cursor: TCursor): Boolean;
@@ -226,6 +244,8 @@ begin
   Result := False;
   if not ValidCursor(Cursor) then Exit;
   Result := FParagraphs[Cursor.Paragraph - 1].Overwrite(c, Cursor);
+  if (Result = TRUE) then
+    FDirty := TRUE;
 end;
 
 function TDocument.DeleteChar(var Cursor: TCursor): Boolean;
@@ -233,6 +253,8 @@ begin
   Result := False;
   if not ValidCursor(Cursor) then Exit;
   Result := FParagraphs[Cursor.Paragraph - 1].DeleteChar(Cursor);
+  if (Result = TRUE) then
+    FDirty := TRUE;
 end;
 
 function TDocument.DeleteChar(const Count: UInt32; var Cursor: TCursor): Boolean;
@@ -240,6 +262,8 @@ begin
   Result := False;
   if not ValidCursor(Cursor) then Exit;
   Result := FParagraphs[Cursor.Paragraph - 1].DeleteChar(Count, Cursor);
+  if (Result = TRUE) then
+    FDirty := TRUE;
 end;
 
 function TDocument.ParagraphBreak(var Cursor: TCursor): Boolean;
@@ -279,6 +303,7 @@ begin
   Cursor.Position := 1;
 
   Result := True;
+  FDirty := TRUE;
 end;
 
 function TDocument.DeleteParagraph(const aParagraph: SizeInt): Boolean;
@@ -305,6 +330,7 @@ begin
   Dec(FParagraphCount);
 
   Result := True;
+  FDirty := TRUE;
 end;
 
 function TDocument.CombineWithNext(var Cursor: TCursor): Boolean;
@@ -330,9 +356,103 @@ begin
   DeleteParagraph(Next);
 
   Result := True;
+  FDirty := TRUE;
 end;
 
-function TDocument.LoadFromFile(const FileName: string): Boolean;
+function TDocument.DeleteRange(const StartCursor,
+  EndCursor: TCursor): SizeInt;
+var
+  StartParagraph: SizeInt;
+  EndParagraph: SizeInt;
+  StartPosition: SizeInt;
+  EndPosition: SizeInt;
+  StartText: String;
+  EndText: String;
+  I: SizeInt;
+  Count: SizeInt;
+begin
+  Result := 0;
+
+  if not ValidCursor(StartCursor) then
+    Exit;
+
+  if not ValidCursor(EndCursor) then
+    Exit;
+
+  { The range must proceed forward. }
+  if (StartCursor.Paragraph > EndCursor.Paragraph) or
+     ((StartCursor.Paragraph = EndCursor.Paragraph) and
+      (StartCursor.Position > EndCursor.Position)) then
+    Exit;
+
+  StartParagraph := StartCursor.Paragraph;
+  EndParagraph := EndCursor.Paragraph;
+  StartPosition := StartCursor.Position;
+  EndPosition := EndCursor.Position;
+
+  { Same paragraph. }
+  if StartParagraph = EndParagraph then begin
+    Count := EndPosition - StartPosition;
+
+    if Count > 0 then begin
+      System.Delete(
+        FParagraphs[StartParagraph - 1].Text,
+        StartPosition,
+        Count
+      );
+
+      Result := Count;
+      FDirty := True;
+    end;
+
+    Exit;
+  end;
+
+  { Save the portions which survive the deletion. }
+  StartText :=
+    Copy(FParagraphs[StartParagraph - 1].Text,
+         1, StartPosition - 1);
+
+  EndText :=
+    Copy(FParagraphs[EndParagraph - 1].Text,
+         EndPosition,
+         Length(FParagraphs[EndParagraph - 1].Text) -
+         EndPosition + 1);
+
+  { Count the deleted characters. }
+  Result :=
+    (Length(FParagraphs[StartParagraph - 1].Text) -
+     Length(StartText)) +
+    (Length(FParagraphs[EndParagraph - 1].Text) -
+     Length(EndText));
+
+  { Delete the paragraphs between the endpoints,
+    including the original end paragraph. }
+  for I := StartParagraph to EndParagraph - 1 do
+    FParagraphs[I].Free;
+
+  { The start paragraph survives and receives the tail
+    of the end paragraph. }
+  FParagraphs[StartParagraph - 1].Text :=
+    StartText + EndText;
+
+  { Shift the remaining paragraphs down. }
+  for I := EndParagraph to FParagraphCount - 1 do
+    FParagraphs[I - (EndParagraph - StartParagraph)] :=
+      FParagraphs[I];
+
+  { Clear the now-unused slots. }
+  for I := FParagraphCount -
+           (EndParagraph - StartParagraph)
+           to FParagraphCount - 1 do
+    FParagraphs[I] := nil;
+
+  Dec(FParagraphCount, EndParagraph - StartParagraph);
+
+  FDirty := True;
+end;
+
+function TDocument.LoadFromFile(const aFileName: string): Boolean;
 var
   F: File;
   FileSize: Int64;
@@ -372,7 +492,7 @@ begin
   Result := False;
 
   { Read the complete file as raw bytes. }
-  AssignFile(F, FileName);
+  AssignFile(F, aFileName);
 
   {$I-}
   Reset(F, 1);
@@ -501,9 +621,11 @@ begin
   SetLength(NewParagraphs, 0);
 
   Result := True;
+  FDirty := FALSE;
+  FFilename := aFilename;
 end;
 
-function TDocument.SaveToFile(const FileName: string): Boolean;
+function TDocument.SaveToFile(const aFileName: string): Boolean;
 var
   F: File;
   I: SizeInt;
@@ -513,7 +635,7 @@ begin
   Result := False;
   LineEnding := #10;
 
-  AssignFile(F, FileName);
+  AssignFile(F, aFileName);
 
   {$I-}
   Rewrite(F, 1);
@@ -568,6 +690,26 @@ begin
   {$I+}
 
   Result := True;
+  FDirty := FALSE;
+end;
+
+function tDocument.Load : boolean;
+begin
+  Result := FALSE;
+  if (FFilename <> '') then
+    Result := LoadFromFile (FFilename);
+end;
+
+function tDocument.Save : boolean;
+begin
+  Result := FALSE;
+  if (FFilename <> '') then
+    Result := SaveToFile (FFilename);
+end;
+
+procedure tDocument.MarkDirty;
+begin
+  FDirty := TRUE
 end;
 
 end.

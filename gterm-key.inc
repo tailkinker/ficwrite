@@ -1,3 +1,150 @@
+procedure GetCommandKey;
+var
+  K     : TKeyEvent;
+  C     : Char;
+  Start : QWord;
+  YPos  : Integer;
+  s     : string;
+begin
+  YPos := MaxY * ScreenWidth;
+  VideoBuf^[YPos    ] := StatusDim.TextAttr + 94; // ^
+  VideoBuf^[YPos + 1] := StatusDim.TextAttr + 75; // K
+  UpdateScreen(FALSE);
+  
+  try
+    Start := GetTickCount64;
+    repeat
+      if KeyPressed then begin
+        K := GetKeyEvent;
+        K := TranslateKeyEvent(K);
+        C := GetKeyEventChar(K);
+        case UpCase(C) of
+          'B', #2:
+            SetBlockStart;
+          'C', #3:
+          	begin
+          	  BlockCopy;
+              BlockInsert;
+            end;
+          'K', #11:
+            SetBlockEnd;
+          'M', #13:
+            BlockMove;
+          'N', #14:
+          	begin
+              NewFile;
+              Scr.Repaginate (Document);
+          	end;
+          'Q', #17:
+          	begin
+          	  if (Document.Dirty) then
+          	    ExitProgram := QueryExit
+          	  else
+          	  	ExitProgram := TRUE;
+          	end;
+          'S', #19:
+          	begin
+              if (Document.Filename = '') then begin
+                s := Document.Filename;
+                if (GetFilename (s)) then
+                  if (Document.SaveToFile(s)) then
+                    Document.Filename := s;
+              end else
+                Document.Save;
+          	end;
+          'X', #24:
+			ExitProgram := Document.Save;
+		  'Y', #25:
+		    BlockDelete;
+        end;
+        Exit;
+      end;
+
+      Sleep(10);
+    until (GetTickCount64 - Start >= 1000);
+  finally
+    VideoBuf^[YPos    ] := Status.TextAttr + 32;
+    VideoBuf^[YPos + 1] := Status.TextAttr + 32;
+    UpdateScreen(FALSE);
+  end;
+end;
+
+function YesOrNo : boolean;
+var
+  K : tKeyEvent;
+  C : char;
+begin
+  Result := FALSE;
+  repeat
+    K := GetKeyEvent;
+    K := TranslateKeyEvent (K);
+    C := GetKeyEventChar (K);
+  until (C in ['y', 'Y', 'n', 'N']);
+  if (C in ['y', 'Y']) then
+    Result := TRUE;
+end;
+
+function YesNoCancel : byte;
+var
+  K : tKeyEvent;
+  C : char;
+begin
+  Result := yncCancel;
+  repeat
+    K := GetKeyEvent;
+    K := TranslateKeyEvent (K);
+    C := GetKeyEventChar (K);
+  until (C in ['y', 'Y', 'n', 'N', 'c', 'C', #27]);
+  if (C in ['y', 'Y']) then
+    Result := yncYes
+  else if (C in ['n', 'N']) then
+  	Result := yncNo;
+end;
+
+function QueryExit : boolean;
+var
+  MayExit : boolean;
+begin
+  MayExit := TRUE;
+  Result := FALSE;
+  if (Document.Dirty) then begin
+    DrawBottomLine ('File has unsaved changes.  Do you wish to save? <Y/N>');
+    if (YesOrNo) then
+      MayExit := Document.Save;
+  end;
+  if (MayExit) then begin
+    DrawBottomLine ('Exit the program? <Y/N>');
+    Result := YesOrNo
+  end
+end;
+
+function NewFile : boolean;
+var
+  Permissions : byte;
+begin
+  Permissions := yncYes;
+  Result := FALSE;
+  if (Document.Dirty) then begin
+    DrawBottomLine ('File has unsaved changes.  Do you wish to save? <Y/N/Cancel>');
+    Permissions := YesNoCancel;
+    if (Permissions = yncYes) then
+      if not Document.Save then
+      	Permissions := yncCancel;
+  end;
+  if (Permissions < yncCancel) then begin
+  	Document.Free;
+  	Document := tDocument.Create;
+    Cursor.Paragraph := 1;
+    Cursor.Position := 1;
+    CursorX := 1;
+    CursorY := 1;
+    TopLine := 0;
+    Overwrite := FALSE;
+    SetCursorType (crUnderline);
+  	Result := TRUE
+  end;
+end;
+
 function CursorMoveRightOne : boolean;
 begin
   Result := TRUE;
@@ -157,27 +304,54 @@ procedure HandleKeyboard;
 var
   K : TKeyEvent;
   C : char;
+  ShiftState : byte;
   SavedX : integer;
+  s : string;
 begin
   K := GetKeyEvent;
   K := TranslateKeyEvent (K);
 
   C := GetKeyEventChar (K);
-
+  ShiftState := GetKeyEventShiftState (K);
   if (C = #8) then begin
     if CursorMoveLeftOne then
       EditDelete;
     Scr.Repaginate (Document, TopLine + CursorY);
-  end;
-
-  if (C in [' '..'~']) then begin
-    Document.Insert (C, Cursor);
+  end else if (C = #11) then begin
+  	GetCommandKey;
+  end else if (C = #13) then begin
+    if Document.ParagraphBreak(Cursor) then
+      Scr.Repaginate(Document, TopLine + CursorY);
+  end else if (C in [' '..'~']) then begin
+    if (Overwrite) then
+      Document.Overwrite (C, Cursor)
+    else
+      Document.Insert (C, Cursor);
     Scr.Repaginate (Document, TopLine + CursorY);
   end;
   
   case GetKeyEventCode (K) of
+  	kbdF1: Help;
+    // Alt+F2 for Save As, because it can be emulated with Esc+F2.
+    kbdF2: begin
+      if ((ShiftState and kbAlt) > 0) or (Document.Filename = '') then begin
+        s := Document.Filename;
+        if (GetFilename (s)) then
+          if (Document.SaveToFile(s)) then
+            Document.Filename := s;
+      end else
+        Document.Save;
+      end;
+    KbdF3: begin
+	    LoadFile;
+	    Scr.Repaginate (Document);
+      end;
+    KbdF4: begin
+      	NewFile;
+      	Scr.Repaginate (Document);
+      end;
     kbdF12:
-      ExitProgram := TRUE;
+      ExitProgram := QueryExit;
     kbdLeft:
       CursorMoveLeftOne;
     kbdRight:
@@ -200,6 +374,14 @@ begin
           CursorMoveUpOne;
         end;
       end;
+    kbdInsert:
+      begin
+        Overwrite := not Overwrite;
+        if Overwrite then
+          SetCursorType (crBlock)
+        else
+          SetCursorType (crUnderline);
+        end;
     kbdHome:
       CursorMoveHome;
     kbdEnd:
