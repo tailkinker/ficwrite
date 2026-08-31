@@ -4,6 +4,8 @@
 
 It runs in a terminal, is written in **Free Pascal**, and is intended to be portable across platforms. Its interface is deliberately keyboard-oriented and keeps the writer's attention on the text rather than on the editor.
 
+<img width="966" height="582" alt="image" src="https://github.com/user-attachments/assets/cecdeffd-5171-4522-8202-ff29daefc601" />
+
 ## Features
 
 * Terminal-based TUI
