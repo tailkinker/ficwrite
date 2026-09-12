@@ -501,14 +501,14 @@ begin
     
     PutString(5,3, #2 + 'FicWrite' + #3 + ' ' + version + ' (C) 2026 Timothy Groves');
     if (Page = 0) then begin
-      PutString(5, 5, #2 + 'F1' + #3 + '        Help (this screen!)');
-      PutString(5, 6, #2 + 'F2' + #3 + '        Save (with same file name)');
-      PutString(5, 7, #2 + AltKBText + 'F2' + #3 + '    Save As (with new file name)');
-      PutString(5, 8, #2 + 'F3' + #3 + '        Load');
-      PutString(5, 9, #2 + 'F4' + #3 + '        New File');
-      PutString(5,10, #2 + 'F12' + #3 + '       Exit FicWrite');
-      PutString(5,11, #2 + 'Ctrl+K,Q' + #3 + '  Exit FicWrite (no confirmation)');
-      PutString(5,12, #2 + 'Ctrl+K,X' + #3 + '  Save and Exit FicWrite (no confirmation)');
+      PutString(5, 5, #2 + 'F1' + #3 + ' or ' + #2 + 'Ctrl+K,H' + #3 + '      Help (this screen!)');
+      PutString(5, 6, #2 + 'F2' + #3 + ' or ' + #2 + 'Ctrl+K,S' + #3 + '      Save (with same file name)');
+      PutString(5, 7, #2 + AltKBText + 'F2' + #3 + ' or ' + #2 + 'Ctrl+K,A' + #3 + '  Save As (with new file name)');
+      PutString(5, 8, #2 + 'F3' + #3 + ' or ' + #2 + 'Ctrl+K,L' + #3 + '      Load');
+      PutString(5, 9, #2 + 'F4' + #3 + ' or ' + #2 + 'Ctrl+K,N' + #3 + '      New File');
+      PutString(5,10, #2 + 'F12' + #3 + '                 Exit FicWrite');
+      PutString(5,11, #2 + 'Ctrl+K,Q' + #3 + '            Exit FicWrite (no confirmation)');
+      PutString(5,12, #2 + 'Ctrl+K,X' + #3 + '            Save and Exit FicWrite (no confirmation)');
     end else begin
       PutString(5, 5, #2 + 'Ctrl+K,B' + #3 + '  Mark the start of the block');
       PutString(5, 6, #2 + 'Ctrl+K,K' + #3 + '  Mark the end of the block');
@@ -517,7 +517,7 @@ begin
       PutString(5, 9, #2 + 'Ctrl+K,Y' + #3 + '  Delete the marked block');
     end;
     
-    PutString(5,14,'Press ' + #2 + 'F1' + #3 + ' to exit this screen, or arrow keys to switch pages');
+    PutString(5,14,'Press ' + #2 + 'Esc' + #3 + ' to exit this screen, or arrow keys to switch pages');
     UpdateScreen(FALSE);
   
   	K := GetKeyEvent;
@@ -526,6 +526,6 @@ begin
   	 Page := 0
   	else if (GetKeyEventCode(K) = kbdRight) then
   	 Page := 1;
-  until (GetKeyEventCode(K) = kbdF1);
+  until (GetKeyEventChar(K) = #27);
   Result := TRUE
 end;

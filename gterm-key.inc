@@ -33,6 +33,8 @@ begin
           	  BlockCopy;
               BlockInsert;
             end;
+          'H', #8:
+            Help;
           'K', #11:
             SetBlockEnd;
           'L', #12:
@@ -65,7 +67,10 @@ begin
                 Document.Save;
           	end;
           'X', #24:
-			ExitProgram := Document.Save;
+			if (Document.Dirty) then
+			  ExitProgram := Document.Save
+			else
+			  ExitProgram := TRUE;
 		  'Y', #25:
 		    BlockDelete;
         end;
