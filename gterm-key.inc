@@ -19,6 +19,13 @@ begin
         K := TranslateKeyEvent(K);
         C := GetKeyEventChar(K);
         case UpCase(C) of
+          'A', #1:
+            begin
+              s := Document.Filename;
+              if (GetFilename (s)) then
+                if (Document.SaveToFile(s)) then
+                  Document.Filename := s;
+            end;
           'B', #2:
             SetBlockStart;
           'C', #3:
@@ -28,6 +35,11 @@ begin
             end;
           'K', #11:
             SetBlockEnd;
+          'L', #12:
+          	begin
+			  LoadFile;
+			  Scr.Repaginate (Document);
+          	end;
           'M', #13:
             BlockMove;
           'N', #14:
