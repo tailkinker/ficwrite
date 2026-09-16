@@ -17,7 +17,8 @@ type
     function DeleteChar(var Cursor: TCursor): Boolean;
     function DeleteChar(const Count: UInt32; var Cursor: TCursor): Boolean;
     function Split(const Position: SizeInt; out Remainder: TParagraph): Boolean;  
-  end;  
+    function Search(var Cursor, BlockStart, BlockEnd: TCursor; const Term: string): Boolean;
+    end;  
   
   TDocument = class
   private
@@ -37,6 +38,7 @@ type
     destructor Destroy; override;
     function ValidCursor(const Cursor: TCursor): Boolean;
     function Insert(const C: char; var Cursor: TCursor): Boolean;
+    function Insert(const s: string; var Cursor: TCursor): Boolean;
     function Overwrite(const C: char; var Cursor: TCursor): Boolean;
     function DeleteChar(var Cursor: TCursor): Boolean;
     function DeleteChar(const Count: UInt32; var Cursor: TCursor): Boolean;
@@ -49,6 +51,7 @@ type
     function Load : boolean;
     function Save : boolean;
     procedure MarkDirty;
+    function Search(var Cursor, BlockStart, BlockEnd: TCursor; const Term: string): Boolean;
   end;
 
 var
@@ -57,7 +60,7 @@ var
 implementation
 
 uses
-  SysUtils, doption;
+  SysUtils, StrUtils, doption;
 
 // === tParagraph =============================================================
 
@@ -171,6 +174,34 @@ begin
   Result := True;
 end;
 
+function TParagraph.Search(var Cursor, BlockStart, BlockEnd: TCursor; const Term: string): Boolean;
+var
+  P: SizeInt;
+begin
+  Result := False;
+
+  if Term = '' then
+    Exit;
+
+  if Cursor.Position < 1 then
+    Exit;
+
+  if Cursor.Position > Length(Text) then
+    Exit;
+
+  P := PosEx(UpperCase(Term), UpperCase(Text), Cursor.Position);
+  if P = 0 then
+    Exit;
+
+  Cursor.Position := P;
+
+  BlockStart := Cursor;
+  BlockEnd := Cursor;
+  Inc(BlockEnd.Position, Length(Term));
+
+  Result := True;
+end;
+
 // === tDocument ==============================================================
 
 constructor TDocument.Create;
@@ -235,6 +266,21 @@ begin
   Result := False;
   if not ValidCursor(Cursor) then Exit;
   Result := FParagraphs[Cursor.Paragraph - 1].Insert(c, Cursor);
+  if (Result = TRUE) then
+    FDirty := TRUE;
+end;
+
+function TDocument.Insert(const s: string; var Cursor: TCursor): Boolean;
+var
+  index : integer;
+begin
+  Result := False;
+  if not ValidCursor(Cursor) then Exit;
+  for index := 1 to length (s) do begin
+    Result := FParagraphs[Cursor.Paragraph - 1].Insert(s [index], Cursor);
+    if (Result = FALSE) then
+      Break;
+    end;
   if (Result = TRUE) then
     FDirty := TRUE;
 end;
@@ -710,6 +756,37 @@ end;
 procedure tDocument.MarkDirty;
 begin
   FDirty := TRUE
+end;
+
+function TDocument.Search(var Cursor, BlockStart, BlockEnd: TCursor; const Term: string): Boolean;
+var
+  P: SizeInt;
+  SearchCursor: TCursor;
+begin
+  Result := False;
+
+  if Term = '' then
+    Exit;
+
+  if not ValidCursor(Cursor) then
+    Exit;
+
+  SearchCursor := Cursor;
+
+  for P := Cursor.Paragraph to FParagraphCount do
+  begin
+    SearchCursor.Paragraph := P;
+
+    if P <> Cursor.Paragraph then
+      SearchCursor.Position := 1;
+
+    if FParagraphs[P - 1].Search(SearchCursor, BlockStart, BlockEnd, Term) then
+    begin
+      Cursor := SearchCursor;
+      Result := True;
+      Exit;
+    end;
+  end;
 end;
 
 end.

@@ -1,4 +1,4 @@
-procedure GetCommandKey;
+procedure GetKCommandKey;
 var
   K     : TKeyEvent;
   C     : Char;
@@ -32,6 +32,11 @@ begin
           	begin
           	  BlockCopy;
               BlockInsert;
+            end;
+          'F', #6: 
+            begin
+              SearchReplace;
+              Scr.Repaginate (Document, TopLine + CursorY);              
             end;
           'H', #8:
             Help;
@@ -135,6 +140,59 @@ begin
   end
 end;
 
+function SearchReplace : boolean;
+var
+  Replace : byte;
+begin
+  Result := FALSE;
+  DrawBottomLine ('Search For: ');
+  InputString(12, MaxX, MaxY, SearchTerm);
+  if (Searchterm = '') then
+    Exit;
+    
+  DrawBottomLine ('Replace? <Yes / No / Cancel>');
+  SetCursorPos (28, MaxY);
+  Replace := YesNoCancel;
+  
+  if (Replace = yncCancel) then
+    Exit
+  else if (Replace = yncYes) then begin
+    ReplaceOnFind := TRUE;
+    DrawBottomLine ('Replace with: ');
+    InputString(14, MaxX, MaxY, ReplaceTerm);
+  end else if (Replace = yncNo) then
+    ReplaceOnFind := FALSE;
+  FindNextMatch;
+end;
+
+function FindNextMatch : boolean;
+var
+  State : boolean;
+begin
+  Result := Document.Search (Cursor, BlockStart, BlockEnd, SearchTerm);
+  if (Result = FALSE) then begin
+    DrawBottomLine ('Search term not found.  Start again from top? (Y/N)');
+    SetCursorPos (52, MaxY);
+    State := YesOrNo;
+    if (State = TRUE) then begin
+      Cursor.Paragraph := 1;
+      Cursor.Position := 1;
+      Result := FindNextMatch
+    end
+  end else begin
+    Scr.CentreLine (BlockStart);
+    DrawScreen;
+    if (ReplaceOnFind) then begin
+      DrawBottomLine ('Replace? <Y/N>');
+      SetCursorPos (15, MaxY);
+      if YesOrNo then begin
+        BlockDelete;
+        Document.Insert (ReplaceTerm, Cursor);
+      end;
+    end;
+  end;
+end;
+
 function NewFile : boolean;
 var
   Permissions : byte;
@@ -157,6 +215,9 @@ begin
     CursorY := 1;
     TopLine := 0;
     Overwrite := FALSE;
+    ReplaceOnFind := FALSE;
+    SearchTerm := '';
+    ReplaceTerm := '';
     SetCursorType (crUnderline);
   	Result := TRUE
   end;
@@ -340,7 +401,15 @@ begin
       EditDelete;
     Scr.Repaginate (Document, TopLine + CursorY);
   end else if (C = #11) then begin
-  	GetCommandKey;
+  	GetKCommandKey;
+  end else if (C = #12) then begin
+    if (SearchTerm = '') then 
+      MessageString := 'No previous search!'
+    else begin
+      CursorMoveRightOne;
+      FindNextMatch;
+    end;
+    Scr.Repaginate (Document, TopLine + CursorY);
   end else if (C = #13) then begin
     if Document.ParagraphBreak(Cursor) then
       Scr.Repaginate(Document, TopLine + CursorY);

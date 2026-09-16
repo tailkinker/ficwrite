@@ -26,17 +26,20 @@ type
     FLines : array of tLine;
     FLineCount : SizeInt;
     FScreenWidth : SizeInt;
-    function GetLine(const Index: SizeInt): tLine;
-    function AddLine : integer;    
+    FScreenHeight : SizeInt;
+    function    GetLine(const Index: SizeInt): tLine;
+    function    AddLine : integer;    
   public
-    property Line [Index: SizeInt] : tLine read GetLine;
-    property LineCount : SizeInt read FLineCount;
-    property ScreenWidth : SizeInt read FScreenWidth write FScreenWidth;
-    constructor Create (aScreenWidth, aScreenHeight : integer);
-    destructor Destroy; override;
-    procedure Grow;
-    procedure Repaginate (aDocument : tDocument);
-    procedure Repaginate (aDocument : tDocument;  aFrom : SizeInt);
+    property    Line [Index: SizeInt] : tLine read GetLine;
+    property    LineCount             : SizeInt read FLineCount;
+    property    ScreenWidth           : SizeInt read FScreenWidth;
+    property    ScreenHeight          : SizeInt read FScreenHeight;
+    constructor Create     (aScreenWidth, aScreenHeight : integer);
+    destructor  Destroy; override;
+    procedure   Grow;
+    procedure   Repaginate (aDocument : tDocument);
+    procedure   Repaginate (aDocument : tDocument;  aFrom : SizeInt);
+    function    CentreLine (const aCursor: tCursor): integer;
   end;
   
 implementation
@@ -77,6 +80,7 @@ constructor tScreen.Create (aScreenWidth, aScreenHeight : integer);
 begin
   inherited Create;
   FScreenWidth := aScreenWidth;
+  FScreenHeight := aScreenHeight;
   SetLength (FLines, aScreenHeight); // Assign enough lines for the terminal
   FLines [0] := tLine.Create;
   FLineCount := 1;
@@ -217,6 +221,36 @@ begin
       end;
     inc (LineIndex);      
   until (LineIndex >= length (FLines));
+end;
+
+function tScreen.CentreLine(const aCursor: tCursor): integer;
+var
+  i      : SizeInt;
+  LineNo : SizeInt;
+  MaxY   : SizeInt;
+begin
+  MaxY := ScreenHeight - 1;
+  LineNo := -1;
+
+  for i := 0 to FLineCount - 1 do
+    if FLines[i].Relative(aCursor) = 0 then
+    begin
+      LineNo := i;
+      Break;
+    end;
+
+  if LineNo < 0 then
+    Exit(-1);
+
+  Result := LineNo - (MaxY div 2);
+
+  if Result < 0 then
+    Result := 0
+  else if Result > FLineCount - MaxY then
+    Result := FLineCount - MaxY;
+
+  if Result < 0 then
+    Result := 0;
 end;
 
 end.

@@ -24,7 +24,11 @@ var
   CursorX,
   CursorY : integer;   // Screen Cursor
   Scr : tScreen;
-  Overwrite : boolean;
+  Overwrite,
+  ReplaceOnFind  : boolean;
+  MessageString : string = 'Welcome to FicWrite';
+  SearchTerm : string = '';
+  ReplaceTerm : string = '';
   Clipboard : array of char;
 
 // Forward Declarations
@@ -49,6 +53,9 @@ begin
   CursorY := 1;
   TopLine := 0;
   Overwrite := FALSE;
+  ReplaceOnFind := FALSE;
+  SearchTerm := '';
+  ReplaceTerm := '';
   SetCursorType (crUnderline);
 end;
 

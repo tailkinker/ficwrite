@@ -380,59 +380,64 @@ var
   LineBuf : array of word;
   s : string;
 begin
-  SetLength (LineBuf, ScreenWidth);
-  for index := 0 to MaxX do
-    LineBuf [index] := Status.TextAttr;
+  if (MessageString <> '') then begin
+    DrawBottomLine (MessageString);
+    MessageString := ''
+  end else begin
+    SetLength (LineBuf, ScreenWidth);
+    for index := 0 to MaxX do
+      LineBuf [index] := Status.TextAttr;
 
-  XPos := 0;
-  s := '   Paragraph ';
-  for index := 1 to length (s) do begin
-    LineBuf [XPos] := LineBuf [XPos] or ord(s [index]);
-    inc (XPos);
-  end;
-  str (Cursor.Paragraph, s);
-  for index := 1 to length (s) do begin
-    LineBuf [XPos] := LineBuf [XPos] or ord(s [index]);
-    inc (XPos);
-  end;
-  s := ', Position ';
-  for index := 1 to length (s) do begin
-    LineBuf [XPos] := LineBuf [XPos] or ord(s [index]);
-    inc (XPos);
-  end;
-  str (Cursor.Position, s);
-  for index := 1 to length (s) do begin
-    LineBuf [XPos] := LineBuf [XPos] or ord(s [index]);
-    inc (XPos);
-  end;
-  if Overwrite then
-    s := '  [Overwrite]'
-  else
-    s := '  [ Insert  ]';
-  for index := 1 to length (s) do begin
-    LineBuf [XPos] := LineBuf [XPos] or ord(s [index]);
-    inc (XPos);
-  end;
-  if (Document.Dirty) then begin
-    s := '  <Changed>';
+    XPos := 0;
+    s := '   Paragraph ';
     for index := 1 to length (s) do begin
       LineBuf [XPos] := LineBuf [XPos] or ord(s [index]);
       inc (XPos);
     end;
-  end;
+    str (Cursor.Paragraph, s);
+    for index := 1 to length (s) do begin
+      LineBuf [XPos] := LineBuf [XPos] or ord(s [index]);
+      inc (XPos);
+    end;
+    s := ', Position ';
+    for index := 1 to length (s) do begin
+      LineBuf [XPos] := LineBuf [XPos] or ord(s [index]);
+      inc (XPos);
+    end;
+    str (Cursor.Position, s);
+    for index := 1 to length (s) do begin
+      LineBuf [XPos] := LineBuf [XPos] or ord(s [index]);
+      inc (XPos);
+    end;
+    if Overwrite then
+      s := '  [Overwrite]'
+    else
+      s := '  [ Insert  ]';
+    for index := 1 to length (s) do begin
+      LineBuf [XPos] := LineBuf [XPos] or ord(s [index]);
+      inc (XPos);
+    end;
+    if (Document.Dirty) then begin
+      s := '  <Changed>';
+      for index := 1 to length (s) do begin
+        LineBuf [XPos] := LineBuf [XPos] or ord(s [index]);
+        inc (XPos);
+      end;
+    end;
 
-  s := 'F1 = Help, F12 = Exit';
-  XPos := MaxX - (length (s) - 1);
-  for index := 1 to length (s) do begin
-    LineBuf [XPos] := LineBuf [XPos] or ord(s [index]);
-    inc (XPos);
-  end;
+    s := 'F1 = Help, F12 = Exit';
+    XPos := MaxX - (length (s) - 1);
+    for index := 1 to length (s) do begin
+      LineBuf [XPos] := LineBuf [XPos] or ord(s [index]);
+      inc (XPos);
+    end;
 
-  // Blit the status bar
-  YPos := MaxY * ScreenWidth;
-  for index := 0 to MaxX do
-    VideoBuf^[index + YPos] := LineBuf [index];
-  SetLength (LineBuf,0);
+    // Blit the status bar
+    YPos := MaxY * ScreenWidth;
+    for index := 0 to MaxX do
+      VideoBuf^[index + YPos] := LineBuf [index];
+    SetLength (LineBuf,0);
+  end
 end;
 
 procedure DrawScreen;
@@ -510,11 +515,13 @@ begin
       PutString(5,11, #2 + 'Ctrl+K,Q' + #3 + '            Exit FicWrite (no confirmation)');
       PutString(5,12, #2 + 'Ctrl+K,X' + #3 + '            Save and Exit FicWrite (no confirmation)');
     end else begin
-      PutString(5, 5, #2 + 'Ctrl+K,B' + #3 + '  Mark the start of the block');
-      PutString(5, 6, #2 + 'Ctrl+K,K' + #3 + '  Mark the end of the block');
-      PutString(5, 7, #2 + 'Ctrl+K,C' + #3 + '  Copy the marked block starting at the cursor');
-      PutString(5, 8, #2 + 'Ctrl+K,M' + #3 + '  Move the marked block to the cursor');
-      PutString(5, 9, #2 + 'Ctrl+K,Y' + #3 + '  Delete the marked block');
+      PutString(5,  5, #2 + 'Ctrl+K,B' + #3 + '  Mark the start of the block');
+      PutString(5,  6, #2 + 'Ctrl+K,K' + #3 + '  Mark the end of the block');
+      PutString(5,  7, #2 + 'Ctrl+K,C' + #3 + '  Copy the marked block starting at the cursor');
+      PutString(5,  8, #2 + 'Ctrl+K,M' + #3 + '  Move the marked block to the cursor');
+      PutString(5,  9, #2 + 'Ctrl+K,Y' + #3 + '  Delete the marked block');
+      PutString(5, 10, #2 + 'Ctrl+K,F' + #3 + '  Search and/or Replace from cursor');
+      PutString(5, 11, #2 + 'Ctrl+L  ' + #3 + '  Find Next');
     end;
     
     PutString(5,14,'Press ' + #2 + 'Esc' + #3 + ' to exit this screen, or arrow keys to switch pages');
