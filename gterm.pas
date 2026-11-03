@@ -43,7 +43,7 @@ begin
     Halt(1);
   end;
   InitKeyboard;
-  SetTheme (ThemeBlueWhite);
+  SetTheme (Theme);
   
   Scr := tScreen.Create (ScreenWidth, ScreenHeight);  
   Cursor.Paragraph := 1;
@@ -78,6 +78,9 @@ end;
 
 // Block handling routines
 {$I gterm-block.inc}
+
+// Help screens
+{$I gterm-help.inc}
 
 procedure TermRun;
 begin

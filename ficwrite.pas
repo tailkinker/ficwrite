@@ -24,11 +24,26 @@ program ficwrite;
 {$mode objfpc}{$H+}{$R+}
 
 uses
-  SysUtils, doption, gdoc, gterm
+  SysUtils, dcommon, doption, gdoc, gterm, gtheme
 {$IFDEF DEBUG}, debug{$ENDIF};
 
 begin
+  Theme := themeWordPerfect;
+  LoadRCFile;
+
   ParseCommandLine;
+  if ('p' in Options.LowerFlags) then
+    TerminalMode := 0
+  else if ('v' in Options.LowerFlags) then
+    TerminalMode := 1;
+  if ('t' in Options.LowerFlags) then
+    Theme := themeTerminal
+  else if ('y' in Options.LowerFlags) then
+    Theme := themeTypewriter
+  else if ('c' in Options.LowerFlags) then
+    Theme := themeCyberdeck
+  else if ('w' in Options.LowerFlags) then
+    Theme := themeWordPerfect;
 
   {$IFDEF DEBUG}
   StartDebug('/dev/pts/5');
@@ -53,4 +68,6 @@ begin
     StopDebug;
     {$ENDIF}
   end;
+  
+  SaveRCFile;  
 end.

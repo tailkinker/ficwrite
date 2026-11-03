@@ -34,6 +34,9 @@ type
 
   tDirArray = array of tDirEntry;
   
+var
+  Theme : byte;
+  TerminalMode : byte;
   
 const
   PARAGRAPH_MARKER = #$81;
@@ -47,7 +50,18 @@ const
   yncYes = 0;
   yncNo = 1;
   yncCancel = 2;
+
+function Choice(Condition: Boolean; const TrueStr, FalseStr: string): string;
   
 implementation
+
+function Choice(Condition: Boolean; const TrueStr, FalseStr: string): string;
+begin
+  if Condition then
+    Result := TrueStr
+  else
+    Result := FalseStr;
+end;
+
 
 end.

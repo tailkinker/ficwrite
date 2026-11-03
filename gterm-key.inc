@@ -91,6 +91,79 @@ begin
   end;
 end;
 
+procedure GetTCommandKey;
+var
+  K     : TKeyEvent;
+  C     : Char;
+  Start : QWord;
+  YPos  : Integer;
+begin
+  YPos := MaxY * ScreenWidth;
+  VideoBuf^[YPos    ] := StatusDim.TextAttr + 94; // ^
+  VideoBuf^[YPos + 1] := StatusDim.TextAttr + 84; // T
+  UpdateScreen(FALSE);
+  
+  try
+    Start := GetTickCount64;
+    repeat
+      if KeyPressed then begin
+        K := GetKeyEvent;
+        K := TranslateKeyEvent(K);
+        C := GetKeyEventChar(K);
+        case UpCase(C) of
+          'C', #3 : GetTerminalMode;
+        end
+      end;
+
+      Sleep(10);
+    until (GetTickCount64 - Start >= 1000);
+  finally
+    VideoBuf^[YPos    ] := Status.TextAttr + 32;
+    VideoBuf^[YPos + 1] := Status.TextAttr + 32;
+    UpdateScreen(FALSE);
+  end;
+end;
+
+procedure GetTerminalMode;
+var
+  K : tKeyEvent;
+  C : char;
+begin
+  DrawBottomLine ('Command keys:  (P) PC Mode or (V) VT100 Mode');
+  repeat
+    K := GetKeyEvent;
+    K := TranslateKeyEvent (K);
+    C := GetKeyEventChar (K);
+  until (C in ['p', 'P', 'v', 'V', #27]);
+  if (C in ['p', 'P']) then
+    TerminalMode := 0
+  else if (C in ['v', 'V']) then
+    TerminalMode := 1    
+end;
+
+procedure GetTheme;
+var
+  K : tKeyEvent;
+  C : char;
+begin
+  DrawBottomLine ('Theme:  (T) Terminal, (Y) Typewriter, (W) WordPerfect, (C) Cyberdeck');
+  repeat
+    K := GetKeyEvent;
+    K := TranslateKeyEvent (K);
+    C := Upcase (GetKeyEventChar (K));
+  until (C in ['C', 'T', 'W', 'Y', #27]);
+  if (C = 'C') then
+    Theme := themeCyberdeck
+  else if (C = 'T') then
+    Theme := themeTerminal
+  else if (C = 'W') then
+    Theme := themeWordPerfect
+  else if (C = 'Y') then
+    Theme := themeTypewriter;
+  SetTheme (Theme);
+  DrawScreen;
+end;
+
 function YesOrNo : boolean;
 var
   K : tKeyEvent;
@@ -413,6 +486,8 @@ begin
   end else if (C = #13) then begin
     if Document.ParagraphBreak(Cursor) then
       Scr.Repaginate(Document, TopLine + CursorY);
+  end else if (C = #20) then begin
+  	GetTCommandKey;
   end else if (C in [' '..'~']) then begin
     if (Overwrite) then
       Document.Overwrite (C, Cursor)
