@@ -507,7 +507,6 @@ var
 
   P: SizeInt;
   LineStart: SizeInt;
-  LineEnd: SizeInt;
 
   NewParagraphs: array of TParagraph;
   NewCount: SizeInt;
@@ -516,6 +515,28 @@ var
   I: SizeInt;
   CurrentParagraph: TParagraph;
 
+  Norm: String; 
+  N: SizeInt;
+
+  { Single LFs inside a paragraph are just soft wraps in the file:
+    turn them into spaces. Stray LFs left at either end (from three or
+    more in a row) are discarded. }
+  function CleanText(const S: String): String;
+  var
+    First, Last, K: SizeInt;
+  begin
+    First := 1;
+    Last := Length(S);
+
+    while (First <= Last) and (S[First] = #10) do Inc(First);
+    while (Last >= First) and (S[Last] = #10) do Dec(Last);
+
+    Result := Copy(S, First, Last - First + 1);
+
+    for K := 1 to Length(Result) do
+      if Result[K] = #10 then Result[K] := ' ';
+  end;
+  
   procedure AddParagraph(const S: String);
   begin
     if NewCount = NewCapacity then begin
@@ -578,77 +599,50 @@ begin
   {$I+}
 
   { Build the new paragraph array. }
-  NewCount := 0;
+ NewCount := 0;
   NewCapacity := 0;
   SetLength(NewParagraphs, 0);
 
-  LineStart := 1;
+  { Normalize line endings: CRLF and bare CR both become LF. }
+  SetLength(Norm, Length(Data));
+  N := 0;
   P := 1;
 
   while P <= Length(Data) do begin
+    Inc(N);
 
-    { LF terminates a paragraph. }
-    if Data[P] = #10 then begin
-
-      { If preceded by CR, exclude the CR. }
-      if (P > LineStart) and (Data[P - 1] = #13) then
-        LineEnd := P - 2
-      else
-        LineEnd := P - 1;
-
-      if LineEnd >= LineStart then
-        AddParagraph(
-          Copy(Data, LineStart, LineEnd - LineStart + 1)
-        )
-      else
-        AddParagraph('');
-
-      LineStart := P + 1;
-      Inc(P);
-      Continue;
-    end;
-
-    { Bare CR also terminates a paragraph.
-      CRLF is handled when the LF is encountered. }
     if Data[P] = #13 then begin
-
-      if (P = Length(Data)) or
-         (Data[P + 1] <> #10) then begin
-
-        LineEnd := P - 1;
-
-        if LineEnd >= LineStart then
-          AddParagraph(
-            Copy(Data, LineStart, LineEnd - LineStart + 1)
-          )
-        else
-          AddParagraph('');
-
-        LineStart := P + 1;
-      end;
-
-      Inc(P);
-      Continue;
-    end;
+      Norm[N] := #10;
+      if (P < Length(Data)) and (Data[P + 1] = #10) then
+        Inc(P);
+    end
+    else
+      Norm[N] := Data[P];
 
     Inc(P);
   end;
 
-  { Add the final paragraph if there is text after the
-    final line ending. }
-  if LineStart <= Length(Data) then
-    AddParagraph(
-      Copy(Data, LineStart, Length(Data) - LineStart + 1)
-    )
-  else if (Length(Data) = 0) or
-          (Data[Length(Data)] = #10) or
-          (Data[Length(Data)] = #13) then
-    AddParagraph('');
+  SetLength(Norm, N);
 
-  { The document must always contain at least one paragraph. }
-  if NewCount = 0 then
-    AddParagraph('');
+  { Split on a blank line (two consecutive LFs). }
+  LineStart := 1;
+  P := 1;
 
+  while P < Length(Norm) do begin
+    if (Norm[P] = #10) and (Norm[P + 1] = #10) then begin
+      AddParagraph(CleanText(Copy(Norm, LineStart, P - LineStart)));
+      Inc(P, 2);
+      LineStart := P;
+    end
+    else
+      Inc(P);
+  end;
+
+  { The text after the last separator is always a paragraph. This also
+    covers an empty file, so the "at least one paragraph" rule is
+    satisfied automatically. }
+  AddParagraph(CleanText(Copy(Norm, LineStart, MaxInt)));
+  
   { Everything succeeded. Replace the existing document. }
   for I := 0 to FParagraphCount - 1 do
     FParagraphs[I].Free;
@@ -679,7 +673,7 @@ var
   LineEnding: String;
 begin
   Result := False;
-  LineEnding := #10;
+  LineEnding := #10#10;
 
   AssignFile(F, aFileName);
 
@@ -708,17 +702,17 @@ begin
       end;
     end;
 
-    { Separate paragraphs with LF, but do not add a final
-      line ending after the last paragraph. }
+    { Separate paragraphs with a blank line (two LFs), but do not add
+      a final separator after the last paragraph. }
     if I < FParagraphCount - 1 then begin
       BlockWrite(
         F,
         LineEnding[1],
-        1,
+        Length(LineEnding),
         BytesWritten
       );
 
-      if BytesWritten <> 1 then begin
+      if BytesWritten <> Length(LineEnding) then begin
         CloseFile(F);
         {$I+}
         Exit;
