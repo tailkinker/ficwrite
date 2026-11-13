@@ -38,9 +38,9 @@ begin
               Entry [ 9].Text := 'Exit FicWrite';
               Entry [10].Key := '';
             end else begin
-              Entry [ 9].Key  := 'Ctrl+K,X';
+              Entry [ 9].Key  := 'Ctrl+K,Q';
               Entry [ 9].Text := 'Exit FicWrite (no confirmation)';
-              Entry [10].Key  := 'Ctrl+K,H';
+              Entry [10].Key  := 'Ctrl+K,X';
               Entry [10].Text := 'Save and Exit FicWrite (no confirmation)';
             end;
           end;

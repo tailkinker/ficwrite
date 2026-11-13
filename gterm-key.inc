@@ -461,7 +461,8 @@ var
   K : TKeyEvent;
   C : char;
   ShiftState : byte;
-  SavedX : integer;
+  SavedX,
+  SavedY : integer;
   s : string;
 begin
   K := GetKeyEvent;
@@ -525,10 +526,14 @@ begin
     kbdDown:
       begin
         SavedX := CursorX;
+        SavedY := CursorY;
         CursorMoveDownOne;
         if (Scr.Line [TopLine + CursorY].IsParagraphBreak) then begin
           CursorX := SavedX;
           CursorMoveDownOne;
+        end;
+        if ((ShiftState and kbShift) > 0) then begin
+          TopLine := TopLine + abs (CursorY - SavedY);
         end;
       end;
     kbdUp:
@@ -538,6 +543,9 @@ begin
         if (Scr.Line [TopLine + CursorY].IsParagraphBreak) then begin
           CursorX := SavedX;
           CursorMoveUpOne;
+        end;
+        if ((ShiftState and kbShift) > 0) then begin
+          TopLine := TopLine - abs (CursorY - SavedY);
         end;
       end;
     kbdInsert:
