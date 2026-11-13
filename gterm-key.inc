@@ -539,6 +539,7 @@ begin
     kbdUp:
       begin
         SavedX := CursorX;
+        SavedY := CursorY;
         CursorMoveUpOne;
         if (Scr.Line [TopLine + CursorY].IsParagraphBreak) then begin
           CursorX := SavedX;
