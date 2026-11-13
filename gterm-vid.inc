@@ -348,10 +348,10 @@ begin
   end;
   
   if (MayLoad) then begin
-    Rect.A.X := 3;
-    Rect.A.Y := 2;
-    Rect.B.X := MaxX - 2;
-    Rect.B.Y := MaxY - 2;    
+    Rect.A.X := 0;
+    Rect.A.Y := 0;
+    Rect.B.X := MaxX;
+    Rect.B.Y := MaxY;    
     Path := GetCurrentDir;
     repeat
       index := 0;
@@ -426,7 +426,10 @@ begin
       end;
     end;
 
-    s := 'F1 = Help, F12 = Exit';
+    case TerminalMode of
+      0 : s := 'F1 = Help, F12 = Exit';
+      1 : s := '^KH = Help, ^KX = Exit';
+    end;
     XPos := MaxX - (length (s) - 1);
     for index := 1 to length (s) do begin
       LineBuf [XPos] := LineBuf [XPos] or ord(s [index]);

@@ -1,6 +1,6 @@
 {
 FicWrite 0.1b
-Copyright Â© 2026 Timothy Groves
+Copyright © 2026 Timothy Groves
 
 FicWrite is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published
