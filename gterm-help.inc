@@ -10,6 +10,8 @@ var
   index : integer;
   Page : byte;
   Entry : array [4..10] of HelpEntry;
+const
+  MAX_PAGE = 2;
 begin
   R.A.X := 0;
   R.B.X := MaxX;
@@ -60,6 +62,17 @@ begin
             Entry [10].Key  := 'Ctrl+L';
             Entry [10].Text := 'Find Next';
           end;
+      2 : begin
+            Entry [ 4].Key  := 'Ctrl+T,C';
+            Entry [ 4].Text := 'Change the console mode';
+            Entry [ 5].Key  := 'Ctrl+T,T';
+            Entry [ 5].Text := 'Change the Theme';
+            Entry [ 6].Key  := '';
+            Entry [ 7].Key  := '';
+            Entry [ 8].Key  := '';
+            Entry [ 9].Key  := '';
+            Entry [10].Key  := '';
+          end;
     end;
 
     for index := 4 to 10 do
@@ -80,9 +93,9 @@ begin
   	K := GetKeyEvent;
   	K := TranslateKeyEvent(K);
   	if (GetKeyEventCode(K) = kbdLeft) then
-  	 Page := 0
+  	 Page := Max (0, Page - 1)
   	else if (GetKeyEventCode(K) = kbdRight) then
-  	 Page := 1;
+  	 Page := Min (MAX_PAGE, Page + 1);
   until (GetKeyEventChar(K) = #27);
   Result := TRUE
 end;

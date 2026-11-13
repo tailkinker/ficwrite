@@ -112,6 +112,7 @@ begin
         C := GetKeyEventChar(K);
         case UpCase(C) of
           'C', #3 : GetTerminalMode;
+          'T', #20 : GetTheme;
         end
       end;
 
