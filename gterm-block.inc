@@ -184,16 +184,21 @@ begin
     exit;
 
   BlockStart := Cursor;
-  for I := 0 to High(Clipboard) do begin
-    if (Clipboard[I] = #13) then begin
-      if Document.ParagraphBreak(Cursor) then
-        Inc(Result)
-      else
-        Break;
-    end else begin
-      Document.Insert(Clipboard[I], Cursor);
-      Inc(Result);
+  Document.BeginGroup;   // a paste undoes in one step
+  try
+    for I := 0 to High(Clipboard) do begin
+      if (Clipboard[I] = #13) then begin
+        if Document.ParagraphBreak(Cursor) then
+          Inc(Result)
+        else
+          Break;
+      end else begin
+        Document.Insert(Clipboard[I], Cursor);
+        Inc(Result);
+      end;
     end;
+  finally
+    Document.EndGroup;
   end;
   BlockEnd := Cursor;
   Scr.Repaginate(Document);
@@ -214,23 +219,28 @@ begin
   // Copy
   BlockCopy;
 
-  // Insert
-  NewBlockStart := Cursor;
-  for I := 0 to High(Clipboard) do begin
-    if (Clipboard[I] = #13) then begin
-      if Document.ParagraphBreak(Cursor) then
-        Inc(Result)
-      else
-        Break;
-    end else begin
-      Document.Insert(Clipboard[I], Cursor);
-      Inc(Result);
+  Document.BeginGroup;   // the insert and the delete undo together
+  try
+    // Insert
+    NewBlockStart := Cursor;
+    for I := 0 to High(Clipboard) do begin
+      if (Clipboard[I] = #13) then begin
+        if Document.ParagraphBreak(Cursor) then
+          Inc(Result)
+        else
+          Break;
+      end else begin
+        Document.Insert(Clipboard[I], Cursor);
+        Inc(Result);
+      end;
     end;
-  end;
-  NewBlockEnd := Cursor;
+    NewBlockEnd := Cursor;
 
-  // Delete
-  BlockDelete;
+    // Delete
+    BlockDelete;
+  finally
+    Document.EndGroup;
+  end;
   
   BlockStart := NewBlockStart;
   BlockEnd := NewBlockEnd;

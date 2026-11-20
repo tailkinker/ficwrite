@@ -7,8 +7,26 @@ interface
 uses
   dcommon;
   
+const
+  UndoCap      = 1024;               { history slots; must be a power of two }
+  UndoMask     = UndoCap - 1;
+  UndoMaxBytes = 1024 * 1024;        { cap on text held by the undo history }
+
 type
-  TParagraph = class
+  { Every change to the text is one of two primitives, and each is the
+    inverse of the other.  #13 in Text stands for a paragraph boundary. }
+  tEditKind = (ekInsert, ekDelete);
+
+  pEdit = ^tEdit;
+  tEdit = record
+    Kind  : tEditKind;
+    At    : TCursor;     { where the text was inserted / removed }
+    After : TCursor;     { cursor once the edit has been (re)applied }
+    Text  : string;
+    Group : SizeInt;     { records sharing a Group undo as one step }
+  end;
+
+  tParagraph = class
   public
     Text: String;
     function TextWithCR : string;
@@ -16,23 +34,46 @@ type
     function Overwrite(const C: char; var Cursor: TCursor): Boolean;
     function DeleteChar(var Cursor: TCursor): Boolean;
     function DeleteChar(const Count: UInt32; var Cursor: TCursor): Boolean;
-    function Split(const Position: SizeInt; out Remainder: TParagraph): Boolean;  
+    function Split(const Position: SizeInt; out Remainder: tParagraph): Boolean;  
     function Search(var Cursor, BlockStart, BlockEnd: TCursor; const Term: string): Boolean;
     end;  
   
-  TDocument = class
+  tDocument = class
   private
-    FParagraphs: array of TParagraph;
+    FParagraphs: array of tParagraph;
     FParagraphCount: SizeInt;
     FDirty : boolean;
     FFilename : string;
+
+    { Undo history: one ring.  Undoable records sit in
+      FHead-FUndoCount .. FHead-1, redoable ones in FHead .. FHead+FRedoCount-1
+      (indices masked with UndoMask).  FHead only ever counts upwards. }
+    FRing       : array[0..UndoCap - 1] of tEdit;
+    FHead       : SizeInt;
+    FUndoCount  : SizeInt;
+    FRedoCount  : SizeInt;
+    FBytes      : SizeInt;     { text held by the undoable records }
+    FGroupDepth : SizeInt;
+    FGroupId    : SizeInt;
+    FRunOpen    : Boolean;     { the newest record may still absorb typing }
+    FReplaying  : Boolean;     { Undo/Redo in progress: do not record }
+    FSavePoint  : SizeInt;     { FHead value at the last save, -1 if lost }
+
     procedure Grow;
-    function GetParagraph(const Index: SizeInt): TParagraph;
+    procedure RecordEdit(Kind: tEditKind; const At: TCursor; const S: string);
+    function  TryMerge(Kind: tEditKind; const At: TCursor; const S: string): Boolean;
+    procedure DropOldest;
+    procedure EvictOldest(const ProtectGroup: SizeInt);
+    procedure TrimBytes;
+    procedure RawInsert(const At: TCursor; const S: string);
+    procedure RawDelete(const At: TCursor; const S: string);
+    function  RawDeleteParagraph(const aParagraph: SizeInt): Boolean;
+    function GetParagraph(const Index: SizeInt): tParagraph;
     procedure SetFileName (aFilename : string);
   public
     property Dirty : boolean read FDirty;
     property ParagraphCount: SizeInt read FParagraphCount;
-    property Paragraph[Index: SizeInt]: TParagraph read GetParagraph;
+    property Paragraph[Index: SizeInt]: tParagraph read GetParagraph;
     property Filename : string read FFileName write SetFileName;
     constructor Create;
     destructor Destroy; override;
@@ -52,6 +93,22 @@ type
     function Save : boolean;
     procedure MarkDirty;
     function Search(var Cursor, BlockStart, BlockEnd: TCursor; const Term: string): Boolean;
+    { The text between two cursors, with #13 between paragraphs. }
+    function ExtractRange(const StartCursor, EndCursor: TCursor): string;
+
+    { Undo / redo.  Both move Cursor to where the change happened. }
+    function Undo(var Cursor: TCursor): Boolean;
+    function Redo(var Cursor: TCursor): Boolean;
+    function CanUndo: Boolean;
+    function CanRedo: Boolean;
+    { Everything recorded between BeginGroup and EndGroup undoes as one
+      step.  Calls nest.  Use try..finally. }
+    procedure BeginGroup;
+    procedure EndGroup;
+    { Stop later typing being merged into the previous undo step.  Call it
+      from cursor-movement keys. }
+    procedure CloseUndoRun;
+    procedure ClearUndo;
   end;
 
 var
@@ -62,14 +119,28 @@ implementation
 uses
   SysUtils, StrUtils, doption;
 
+{ Where the cursor ends up after S is inserted at At. }
+function CursorAfter(const At: TCursor; const S: string): TCursor;
+var
+  I: SizeInt;
+begin
+  Result := At;
+  for I := 1 to Length(S) do
+    if S[I] = #13 then begin
+      Inc(Result.Paragraph);
+      Result.Position := 1;
+    end else
+      Inc(Result.Position);
+end;
+
 // === tParagraph =============================================================
 
-function TParagraph.TextWithCR : string;
+function tParagraph.TextWithCR : string;
 begin
   Result := Text + PARAGRAPH_MARKER;
 end;
 
-function TParagraph.Insert(const C: Char; var Cursor: TCursor): Boolean;
+function tParagraph.Insert(const C: Char; var Cursor: TCursor): Boolean;
 begin
   Result := False;
 
@@ -85,7 +156,7 @@ begin
 end;
 
 
-function TParagraph.Overwrite(const C: Char;
+function tParagraph.Overwrite(const C: Char;
   var Cursor: TCursor): Boolean;
 begin
   Result := False;
@@ -108,13 +179,13 @@ begin
 end;
 
 
-function TParagraph.DeleteChar(var Cursor: TCursor): Boolean;
+function tParagraph.DeleteChar(var Cursor: TCursor): Boolean;
 begin
   Result := DeleteChar(UInt32(1), Cursor);
 end;
 
 
-function TParagraph.DeleteChar(const Count: UInt32;
+function tParagraph.DeleteChar(const Count: UInt32;
   var Cursor: TCursor): Boolean;
 var
   ActualCount: UInt32;
@@ -150,7 +221,7 @@ begin
 end;
 
 
-function TParagraph.Split(const Position: SizeInt; out Remainder: TParagraph): Boolean;
+function tParagraph.Split(const Position: SizeInt; out Remainder: tParagraph): Boolean;
 begin
   Result := False;
   Remainder := nil;
@@ -162,7 +233,7 @@ begin
      (Position > Length(Text) + 1) then
     Exit;
 
-  Remainder := TParagraph.Create;
+  Remainder := tParagraph.Create;
 
   { Copy everything from Position onward. }
   Remainder.Text :=
@@ -174,7 +245,7 @@ begin
   Result := True;
 end;
 
-function TParagraph.Search(var Cursor, BlockStart, BlockEnd: TCursor; const Term: string): Boolean;
+function tParagraph.Search(var Cursor, BlockStart, BlockEnd: TCursor; const Term: string): Boolean;
 var
   P: SizeInt;
 begin
@@ -204,7 +275,7 @@ end;
 
 // === tDocument ==============================================================
 
-constructor TDocument.Create;
+constructor tDocument.Create;
 begin
   inherited Create;
   SetLength(FParagraphs, 1);
@@ -212,23 +283,33 @@ begin
   FParagraphs[0].Text := '';
   FParagraphCount := 1;
   FDirty := FALSE;
+  FHead := 0;
+  FUndoCount := 0;
+  FRedoCount := 0;
+  FBytes := 0;
+  FGroupDepth := 0;
+  FGroupId := 0;
+  FRunOpen := FALSE;
+  FReplaying := FALSE;
+  FSavePoint := 0;
 end;
 
-destructor TDocument.Destroy;
+destructor tDocument.Destroy;
 var
   index : SizeInt;
 begin
   for index := 0 to (Length(FParagraphs) - 1) do
     FParagraphs[index].Free;
   SetLength (FParagraphs, 0);
+  inherited Destroy;
 end;
 
-procedure TDocument.SetFileName (aFilename : string);
+procedure tDocument.SetFileName (aFilename : string);
 begin
   FFilename := aFilename;
 end;
 
-function TDocument.GetParagraph(const Index: SizeInt): TParagraph;
+function tDocument.GetParagraph(const Index: SizeInt): tParagraph;
 begin
   if (Index < 1) or (Index > FParagraphCount) then
     Result := nil
@@ -236,7 +317,7 @@ begin
     Result := FParagraphs[Index - 1];
 end;
 
-procedure TDocument.Grow;
+procedure tDocument.Grow;
 var
   NewCapacity: SizeInt;
 begin
@@ -249,7 +330,7 @@ begin
   FDirty := TRUE;
 end;
 
-function TDocument.ValidCursor(const Cursor: TCursor): Boolean;
+function tDocument.ValidCursor(const Cursor: TCursor): Boolean;
 begin
   Result := False;
   if (Cursor.Paragraph < 1) or
@@ -261,65 +342,109 @@ begin
     (Cursor.Position <= Length(FParagraphs[Cursor.Paragraph - 1].Text) + 1);
 end;
 
-function TDocument.Insert(const c: char; var Cursor: TCursor): Boolean;
+function tDocument.Insert(const c: char; var Cursor: TCursor): Boolean;
+var
+  At: TCursor;
 begin
   Result := False;
   if not ValidCursor(Cursor) then Exit;
+  At := Cursor;
   Result := FParagraphs[Cursor.Paragraph - 1].Insert(c, Cursor);
-  if (Result = TRUE) then
+  if (Result = TRUE) then begin
     FDirty := TRUE;
+    RecordEdit(ekInsert, At, c);
+  end;
 end;
 
-function TDocument.Insert(const s: string; var Cursor: TCursor): Boolean;
+function tDocument.Insert(const s: string; var Cursor: TCursor): Boolean;
 var
   index : integer;
+  Done  : integer;
+  At    : TCursor;
 begin
   Result := False;
   if not ValidCursor(Cursor) then Exit;
+  At := Cursor;
+  Done := 0;
   for index := 1 to length (s) do begin
     Result := FParagraphs[Cursor.Paragraph - 1].Insert(s [index], Cursor);
     if (Result = FALSE) then
       Break;
+    Inc(Done);
     end;
-  if (Result = TRUE) then
+  if (Done > 0) then begin
     FDirty := TRUE;
+    RecordEdit(ekInsert, At, Copy(s, 1, Done));
+  end;
 end;
 
-function TDocument.Overwrite(const c: char; var Cursor: TCursor): Boolean;
-begin
-  Result := False;
-  if not ValidCursor(Cursor) then Exit;
-  Result := FParagraphs[Cursor.Paragraph - 1].Overwrite(c, Cursor);
-  if (Result = TRUE) then
-    FDirty := TRUE;
-end;
-
-function TDocument.DeleteChar(var Cursor: TCursor): Boolean;
-begin
-  Result := False;
-  if not ValidCursor(Cursor) then Exit;
-  Result := FParagraphs[Cursor.Paragraph - 1].DeleteChar(Cursor);
-  if (Result = TRUE) then
-    FDirty := TRUE;
-end;
-
-function TDocument.DeleteChar(const Count: UInt32; var Cursor: TCursor): Boolean;
-begin
-  Result := False;
-  if not ValidCursor(Cursor) then Exit;
-  Result := FParagraphs[Cursor.Paragraph - 1].DeleteChar(Count, Cursor);
-  if (Result = TRUE) then
-    FDirty := TRUE;
-end;
-
-function TDocument.ParagraphBreak(var Cursor: TCursor): Boolean;
+function tDocument.Overwrite(const c: char; var Cursor: TCursor): Boolean;
 var
-  NewParagraph: TParagraph;
+  At  : TCursor;
+  Old : string;
+begin
+  Result := False;
+  if not ValidCursor(Cursor) then Exit;
+  At := Cursor;
+  { Empty at the end of a paragraph, where overwrite becomes insert. }
+  Old := Copy(FParagraphs[Cursor.Paragraph - 1].Text, Cursor.Position, 1);
+  Result := FParagraphs[Cursor.Paragraph - 1].Overwrite(c, Cursor);
+  if (Result = TRUE) then begin
+    FDirty := TRUE;
+    BeginGroup;
+    try
+      if Old <> '' then
+        RecordEdit(ekDelete, At, Old);
+      RecordEdit(ekInsert, At, c);
+    finally
+      EndGroup;
+    end;
+  end;
+end;
+
+function tDocument.DeleteChar(var Cursor: TCursor): Boolean;
+var
+  At      : TCursor;
+  Removed : string;
+begin
+  Result := False;
+  if not ValidCursor(Cursor) then Exit;
+  At := Cursor;
+  Removed := Copy(FParagraphs[Cursor.Paragraph - 1].Text, Cursor.Position, 1);
+  Result := FParagraphs[Cursor.Paragraph - 1].DeleteChar(Cursor);
+  if (Result = TRUE) then begin
+    FDirty := TRUE;
+    RecordEdit(ekDelete, At, Removed);
+  end;
+end;
+
+function tDocument.DeleteChar(const Count: UInt32; var Cursor: TCursor): Boolean;
+var
+  At      : TCursor;
+  Removed : string;
+begin
+  Result := False;
+  if not ValidCursor(Cursor) then Exit;
+  At := Cursor;
+  { Copy clips at the end of the paragraph, as the deletion does. }
+  Removed := Copy(FParagraphs[Cursor.Paragraph - 1].Text, Cursor.Position, SizeInt(Count));
+  Result := FParagraphs[Cursor.Paragraph - 1].DeleteChar(Count, Cursor);
+  if (Result = TRUE) then begin
+    FDirty := TRUE;
+    RecordEdit(ekDelete, At, Removed);
+  end;
+end;
+
+function tDocument.ParagraphBreak(var Cursor: TCursor): Boolean;
+var
+  NewParagraph: tParagraph;
   NewIndex: SizeInt;
   I: SizeInt;
+  At: TCursor;
 begin
   Result := False;
   if not ValidCursor(Cursor) then Exit;
+  At := Cursor;
 
   { Make room for the new paragraph if necessary. }
   if FParagraphCount = Length(FParagraphs) then
@@ -350,9 +475,11 @@ begin
 
   Result := True;
   FDirty := TRUE;
+  RecordEdit(ekInsert, At, #13);
 end;
 
-function TDocument.DeleteParagraph(const aParagraph: SizeInt): Boolean;
+{ Removes a paragraph from the array.  Does not record anything. }
+function tDocument.RawDeleteParagraph(const aParagraph: SizeInt): Boolean;
 var
   index: SizeInt;
 begin
@@ -379,10 +506,41 @@ begin
   FDirty := TRUE;
 end;
 
-function TDocument.CombineWithNext(var Cursor: TCursor): Boolean;
+{ aParagraph is zero-based, as it always was. }
+function tDocument.DeleteParagraph(const aParagraph: SizeInt): Boolean;
+var
+  At: TCursor;
+  S: string;
+begin
+  Result := False;
+
+  if FParagraphCount <= 1 then
+    Exit;
+
+  if (aParagraph < 0) or (aParagraph > FParagraphCount - 1) then
+    Exit;
+
+  { Record the paragraph together with one boundary, as text. }
+  if aParagraph < FParagraphCount - 1 then begin
+    At.Paragraph := aParagraph + 1;
+    At.Position := 1;
+    S := FParagraphs[aParagraph].Text + #13;
+  end else begin
+    At.Paragraph := aParagraph;
+    At.Position := Length(FParagraphs[aParagraph - 1].Text) + 1;
+    S := #13 + FParagraphs[aParagraph].Text;
+  end;
+
+  Result := RawDeleteParagraph(aParagraph);
+  if Result then
+    RecordEdit(ekDelete, At, S);
+end;
+
+function tDocument.CombineWithNext(var Cursor: TCursor): Boolean;
 var
   Current: SizeInt;
   Next: SizeInt;
+  At: TCursor;
 begin
   Result := False;
 
@@ -395,17 +553,22 @@ begin
   if Next >= FParagraphCount then
     Exit;
 
+  { The boundary being removed sits at the end of the current paragraph. }
+  At.Paragraph := Cursor.Paragraph;
+  At.Position := Length(FParagraphs[Current].Text) + 1;
+
   FParagraphs[Current].Text :=
     FParagraphs[Current].Text +
     FParagraphs[Next].Text;
 
-  DeleteParagraph(Next);
+  RawDeleteParagraph(Next);
 
   Result := True;
   FDirty := TRUE;
+  RecordEdit(ekDelete, At, #13);
 end;
 
-function TDocument.DeleteRange(const StartCursor,
+function tDocument.DeleteRange(const StartCursor,
   EndCursor: TCursor): SizeInt;
 var
   StartParagraph: SizeInt;
@@ -414,6 +577,7 @@ var
   EndPosition: SizeInt;
   StartText: String;
   EndText: String;
+  Removed: String;
   I: SizeInt;
   Count: SizeInt;
 begin
@@ -430,6 +594,10 @@ begin
      ((StartCursor.Paragraph = EndCursor.Paragraph) and
       (StartCursor.Position > EndCursor.Position)) then
     Exit;
+
+  { Keep the text, for undo, before it is destroyed. }
+  if not FReplaying then
+    Removed := ExtractRange(StartCursor, EndCursor);
 
   StartParagraph := StartCursor.Paragraph;
   EndParagraph := EndCursor.Paragraph;
@@ -449,6 +617,7 @@ begin
 
       Result := Count;
       FDirty := True;
+      RecordEdit(ekDelete, StartCursor, Removed);
     end;
 
     Exit;
@@ -496,9 +665,10 @@ begin
   Dec(FParagraphCount, EndParagraph - StartParagraph);
 
   FDirty := True;
+  RecordEdit(ekDelete, StartCursor, Removed);
 end;
 
-function TDocument.LoadFromFile(const aFileName: string): Boolean;
+function tDocument.LoadFromFile(const aFileName: string): Boolean;
 var
   F: File;
   FileSize: Int64;
@@ -508,12 +678,12 @@ var
   P: SizeInt;
   LineStart: SizeInt;
 
-  NewParagraphs: array of TParagraph;
+  NewParagraphs: array of tParagraph;
   NewCount: SizeInt;
   NewCapacity: SizeInt;
 
   I: SizeInt;
-  CurrentParagraph: TParagraph;
+  CurrentParagraph: tParagraph;
 
   Norm: String; 
   N: SizeInt;
@@ -548,7 +718,7 @@ var
       SetLength(NewParagraphs, NewCapacity);
     end;
 
-    CurrentParagraph := TParagraph.Create;
+    CurrentParagraph := tParagraph.Create;
     CurrentParagraph.Text := S;
 
     NewParagraphs[NewCount] := CurrentParagraph;
@@ -660,12 +830,16 @@ begin
 
   SetLength(NewParagraphs, 0);
 
+  { A freshly loaded document has no history. }
+  ClearUndo;
+
   Result := True;
   FDirty := FALSE;
+  FSavePoint := FHead;
   FFilename := aFilename;
 end;
 
-function TDocument.SaveToFile(const aFileName: string): Boolean;
+function tDocument.SaveToFile(const aFileName: string): Boolean;
 var
   F: File;
   I: SizeInt;
@@ -731,6 +905,8 @@ begin
 
   Result := True;
   FDirty := FALSE;
+  FSavePoint := FHead;     { this history position is what is on disk }
+  FRunOpen := FALSE;       { ...so later typing must not merge into it }
 end;
 
 function tDocument.Load : boolean;
@@ -752,7 +928,7 @@ begin
   FDirty := TRUE
 end;
 
-function TDocument.Search(var Cursor, BlockStart, BlockEnd: TCursor; const Term: string): Boolean;
+function tDocument.Search(var Cursor, BlockStart, BlockEnd: TCursor; const Term: string): Boolean;
 var
   P: SizeInt;
   SearchCursor: TCursor;
@@ -781,6 +957,350 @@ begin
       Exit;
     end;
   end;
+end;
+
+
+// === undo / redo ============================================================
+
+function tDocument.ExtractRange(const StartCursor,
+  EndCursor: TCursor): string;
+var
+  P, Lo, Hi, Total, Offset: SizeInt;
+
+  procedure RangeOf(const Para: SizeInt);
+  begin
+    if Para = StartCursor.Paragraph then
+      Lo := StartCursor.Position
+    else
+      Lo := 1;
+    if Para = EndCursor.Paragraph then
+      Hi := EndCursor.Position - 1
+    else
+      Hi := Length(FParagraphs[Para - 1].Text);
+  end;
+
+begin
+  Result := '';
+
+  if not ValidCursor(StartCursor) then Exit;
+  if not ValidCursor(EndCursor) then Exit;
+
+  { The range must proceed forward. }
+  if (StartCursor.Paragraph > EndCursor.Paragraph) or
+     ((StartCursor.Paragraph = EndCursor.Paragraph) and
+      (StartCursor.Position > EndCursor.Position)) then
+    Exit;
+
+  { Measure first, so a large range is built in one allocation. }
+  Total := EndCursor.Paragraph - StartCursor.Paragraph;  { one #13 per boundary }
+  for P := StartCursor.Paragraph to EndCursor.Paragraph do begin
+    RangeOf(P);
+    Inc(Total, Hi - Lo + 1);
+  end;
+
+  SetLength(Result, Total);
+  Offset := 0;
+  for P := StartCursor.Paragraph to EndCursor.Paragraph do begin
+    RangeOf(P);
+    if Hi >= Lo then begin
+      Move(FParagraphs[P - 1].Text[Lo], Result[Offset + 1], Hi - Lo + 1);
+      Inc(Offset, Hi - Lo + 1);
+    end;
+    if P < EndCursor.Paragraph then begin
+      Inc(Offset);
+      Result[Offset] := #13;
+    end;
+  end;
+end;
+
+{ Raw insert: puts S in at At, #13 being a paragraph break.  Whole
+  segments go in at once, so restoring a large deletion is not quadratic. }
+procedure tDocument.RawInsert(const At: TCursor; const S: string);
+var
+  C: TCursor;
+  Start, P: SizeInt;
+  Seg: string;
+begin
+  if not ValidCursor(At) then Exit;
+  C := At;
+  Start := 1;
+  for P := 1 to Length(S) + 1 do
+    if (P > Length(S)) or (S[P] = #13) then begin
+      if P > Start then begin
+        Seg := Copy(S, Start, P - Start);
+        System.Insert(Seg, FParagraphs[C.Paragraph - 1].Text, C.Position);
+        Inc(C.Position, Length(Seg));
+        FDirty := TRUE;
+      end;
+      if P <= Length(S) then
+        ParagraphBreak(C);
+      Start := P + 1;
+    end;
+end;
+
+procedure tDocument.RawDelete(const At: TCursor; const S: string);
+begin
+  DeleteRange(At, CursorAfter(At, S));
+end;
+
+procedure tDocument.BeginGroup;
+begin
+  if FGroupDepth = 0 then begin
+    Inc(FGroupId);
+    FRunOpen := FALSE;
+  end;
+  Inc(FGroupDepth);
+end;
+
+procedure tDocument.EndGroup;
+begin
+  if FGroupDepth > 0 then
+    Dec(FGroupDepth);
+  if FGroupDepth = 0 then
+    FRunOpen := FALSE;
+end;
+
+procedure tDocument.CloseUndoRun;
+begin
+  FRunOpen := FALSE;
+end;
+
+function tDocument.CanUndo: Boolean;
+begin
+  Result := FUndoCount > 0;
+end;
+
+function tDocument.CanRedo: Boolean;
+begin
+  Result := FRedoCount > 0;
+end;
+
+procedure tDocument.ClearUndo;
+var
+  I: SizeInt;
+begin
+  for I := 0 to UndoCap - 1 do
+    FRing[I].Text := '';
+  FHead := 0;
+  FUndoCount := 0;
+  FRedoCount := 0;
+  FBytes := 0;
+  FRunOpen := FALSE;
+  { The history position that matched the file is gone. }
+  if FDirty then
+    FSavePoint := -1
+  else
+    FSavePoint := 0;
+end;
+
+procedure tDocument.DropOldest;
+var
+  Slot: SizeInt;
+begin
+  Slot := (FHead - FUndoCount) and UndoMask;
+  Dec(FBytes, Length(FRing[Slot].Text));
+  FRing[Slot].Text := '';
+  Dec(FUndoCount);
+end;
+
+{ Forget the oldest undo step.  Steps are dropped whole, unless that step is
+  ProtectGroup (an enormous group still being recorded), in which case only
+  its oldest record goes. }
+procedure tDocument.EvictOldest(const ProtectGroup: SizeInt);
+var
+  G: SizeInt;
+begin
+  if FUndoCount = 0 then Exit;
+  G := FRing[(FHead - FUndoCount) and UndoMask].Group;
+  DropOldest;
+  if G = ProtectGroup then Exit;
+  while (FUndoCount > 0) and
+        (FRing[(FHead - FUndoCount) and UndoMask].Group = G) do
+    DropOldest;
+end;
+
+procedure tDocument.TrimBytes;
+var
+  G: SizeInt;
+begin
+  if FUndoCount = 0 then Exit;
+  G := FRing[(FHead - 1) and UndoMask].Group;
+  while (FBytes > UndoMaxBytes) and (FUndoCount > 1) do
+    EvictOldest(G);
+end;
+
+{ Typing and deleting one character at a time should not make one undo step
+  per keystroke.  Try to fold the edit into the newest record. }
+function tDocument.TryMerge(Kind: tEditKind; const At: TCursor;
+  const S: string): Boolean;
+var
+  PE: pEdit;
+  Last: char;
+begin
+  Result := False;
+  if (FUndoCount = 0) or (Length(S) <> 1) then Exit;
+
+  PE := @FRing[(FHead - 1) and UndoMask];
+  if PE^.Kind <> Kind then Exit;
+
+  if FGroupDepth > 0 then begin
+    { Inside a group: only continue the group's own record. }
+    if PE^.Group <> FGroupId then Exit;
+  end else begin
+    if not FRunOpen then Exit;
+  end;
+
+  case Kind of
+    ekInsert:
+      begin
+        { Must continue exactly where the last insert stopped. }
+        if (At.Paragraph <> PE^.After.Paragraph) or
+           (At.Position <> PE^.After.Position) then Exit;
+        if FGroupDepth = 0 then begin
+          { A typed run ends at Enter and after each space, so undo goes
+            word by word. }
+          if S[1] = #13 then Exit;
+          Last := PE^.Text[Length(PE^.Text)];
+          if (Last = #13) or (Last = ' ') then Exit;
+        end;
+        PE^.Text := PE^.Text + S;
+        PE^.After := CursorAfter(PE^.After, S);
+      end;
+
+    ekDelete:
+      begin
+        if FGroupDepth > 0 then Exit;
+        if (S[1] = #13) or (PE^.Text[1] = #13) then Exit;
+        if At.Paragraph <> PE^.At.Paragraph then Exit;
+        if At.Position + 1 = PE^.At.Position then begin
+          { Backspacing: the new character lies just before the run. }
+          PE^.Text := S + PE^.Text;
+          PE^.At := At;
+          PE^.After := At;
+        end else if At.Position = PE^.At.Position then
+          { Delete key: the next character slid into the same place. }
+          PE^.Text := PE^.Text + S
+        else
+          Exit;
+      end;
+  end;
+
+  Inc(FBytes, Length(S));
+  Result := True;
+end;
+
+procedure tDocument.RecordEdit(Kind: tEditKind; const At: TCursor;
+  const S: string);
+var
+  I, Slot, G: SizeInt;
+begin
+  if FReplaying or (S = '') then Exit;
+
+  if TryMerge(Kind, At, S) then begin
+    TrimBytes;
+    Exit;
+  end;
+
+  { A new edit starts a new branch of history: the redo tail is gone. }
+  if FRedoCount > 0 then begin
+    if FSavePoint > FHead then
+      FSavePoint := -1;      { the saved state was in the discarded tail }
+    for I := 0 to FRedoCount - 1 do
+      FRing[(FHead + I) and UndoMask].Text := '';
+    FRedoCount := 0;
+  end;
+
+  if FGroupDepth > 0 then
+    G := FGroupId
+  else begin
+    Inc(FGroupId);
+    G := FGroupId;
+  end;
+
+  { The ring is full: the slot about to be reused holds the oldest step. }
+  if FUndoCount = UndoCap then
+    EvictOldest(G);
+
+  Slot := FHead and UndoMask;
+  FRing[Slot].Kind := Kind;
+  FRing[Slot].At := At;
+  FRing[Slot].Text := S;
+  FRing[Slot].Group := G;
+  if Kind = ekInsert then
+    FRing[Slot].After := CursorAfter(At, S)
+  else
+    FRing[Slot].After := At;
+
+  Inc(FHead);
+  Inc(FUndoCount);
+  Inc(FBytes, Length(S));
+
+  { Only a lone character can start a run that further typing may join. }
+  FRunOpen := (FGroupDepth = 0) and (Length(S) = 1);
+
+  TrimBytes;
+end;
+
+function tDocument.Undo(var Cursor: TCursor): Boolean;
+var
+  Slot, G: SizeInt;
+begin
+  Result := FUndoCount > 0;
+  if not Result then Exit;
+
+  FRunOpen := FALSE;
+  FReplaying := TRUE;
+  try
+    G := FRing[(FHead - 1) and UndoMask].Group;
+    while (FUndoCount > 0) and
+          (FRing[(FHead - 1) and UndoMask].Group = G) do begin
+      Dec(FHead);
+      Dec(FUndoCount);
+      Inc(FRedoCount);
+      Slot := FHead and UndoMask;
+      case FRing[Slot].Kind of
+        ekInsert: RawDelete(FRing[Slot].At, FRing[Slot].Text);
+        ekDelete: RawInsert(FRing[Slot].At, FRing[Slot].Text);
+      end;
+      Dec(FBytes, Length(FRing[Slot].Text));
+      Cursor := FRing[Slot].At;
+    end;
+  finally
+    FReplaying := FALSE;
+  end;
+
+  FDirty := (FHead <> FSavePoint);
+end;
+
+function tDocument.Redo(var Cursor: TCursor): Boolean;
+var
+  Slot, G: SizeInt;
+begin
+  Result := FRedoCount > 0;
+  if not Result then Exit;
+
+  FRunOpen := FALSE;
+  FReplaying := TRUE;
+  try
+    G := FRing[FHead and UndoMask].Group;
+    while (FRedoCount > 0) and
+          (FRing[FHead and UndoMask].Group = G) do begin
+      Slot := FHead and UndoMask;
+      case FRing[Slot].Kind of
+        ekInsert: RawInsert(FRing[Slot].At, FRing[Slot].Text);
+        ekDelete: RawDelete(FRing[Slot].At, FRing[Slot].Text);
+      end;
+      Inc(FBytes, Length(FRing[Slot].Text));
+      Cursor := FRing[Slot].After;
+      Inc(FHead);
+      Dec(FRedoCount);
+      Inc(FUndoCount);
+    end;
+  finally
+    FReplaying := FALSE;
+  end;
+
+  FDirty := (FHead <> FSavePoint);
 end;
 
 end.

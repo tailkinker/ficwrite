@@ -67,8 +67,10 @@ begin
             Entry [ 4].Text := 'Change the console mode';
             Entry [ 5].Key  := 'Ctrl+T,T';
             Entry [ 5].Text := 'Change the Theme';
-            Entry [ 6].Key  := '';
-            Entry [ 7].Key  := '';
+            Entry [ 6].Key  := Choice (TerminalMode = 0, 'Ctrl+Z', 'Ctrl+K,U');
+            Entry [ 6].Text := 'Undo';
+            Entry [ 7].Key  := Choice (TerminalMode = 0, 'Ctrl+Y', 'Ctrl+K,R');
+            Entry [ 7].Text := 'Redo';
             Entry [ 8].Key  := '';
             Entry [ 9].Key  := '';
             Entry [10].Key  := '';

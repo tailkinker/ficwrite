@@ -1,3 +1,38 @@
+procedure ShowCursor;
+var
+  I, N : SizeInt;
+begin
+  for I := 0 to Scr.LineCount - 1 do
+    if (Scr.Line [I].Relative (Cursor) = 0) then begin
+      if (I < TopLine) or (I > BottomLine) then begin
+        N := Scr.CentreLine (Cursor);
+        if (N >= 0) then
+          TopLine := N;
+      end;
+      Exit;
+    end;
+end;
+
+procedure DoUndo;
+begin
+  if Document.Undo (Cursor) then begin
+    BlockClear;
+    Scr.Repaginate (Document);
+    ShowCursor
+  end else
+    MessageString := 'Nothing to undo';
+end;
+
+procedure DoRedo;
+begin
+  if Document.Redo (Cursor) then begin
+    BlockClear;
+    Scr.Repaginate (Document);
+    ShowCursor
+  end else
+    MessageString := 'Nothing to redo';
+end;
+
 procedure GetKCommandKey;
 var
   K     : TKeyEvent;
@@ -61,6 +96,10 @@ begin
           	  else
           	  	ExitProgram := TRUE;
           	end;
+          'R', #18:
+            DoRedo;
+          'U', #21:
+            DoUndo;
           'S', #19:
           	begin
               if (Document.Filename = '') then begin
@@ -260,8 +299,13 @@ begin
       DrawBottomLine ('Replace? <Y/N>');
       SetCursorPos (15, MaxY);
       if YesOrNo then begin
-        BlockDelete;
-        Document.Insert (ReplaceTerm, Cursor);
+        Document.BeginGroup;   // one undo step for the whole replacement
+        try
+          BlockDelete;
+          Document.Insert (ReplaceTerm, Cursor);
+        finally
+          Document.EndGroup;
+        end;
       end;
     end;
   end;
@@ -490,6 +534,10 @@ begin
       Scr.Repaginate(Document, TopLine + CursorY);
   end else if (C = #20) then begin
   	GetTCommandKey;
+  end else if (C = #26) then begin
+    DoUndo;
+  end else if (C = #25) then begin
+    DoRedo;
   end else if (C in [' '..'~']) then begin
     if (Overwrite) then
       Document.Overwrite (C, Cursor)
@@ -498,6 +546,13 @@ begin
     Scr.Repaginate (Document, TopLine + CursorY);
   end;
   
+  // Moving the cursor ends the current typing run, so that undo steps do not
+  // join up across a jump.
+  case GetKeyEventCode (K) of
+    kbdLeft, kbdRight, kbdUp, kbdDown, kbdHome, kbdEnd, kbdPgUp, kbdPgDn:
+      Document.CloseUndoRun;
+  end;
+
   case GetKeyEventCode (K) of
   	kbdF1: Help;
     // Alt+F2 for Save As, because it can be emulated with Esc+F2.
