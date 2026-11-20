@@ -18,7 +18,7 @@ var
   Options: TOptions;
   
 const
-  version = '0.2b';
+  version = '0.3b';
 
 procedure ParseCommandLine;
 procedure LoadRCFile;
